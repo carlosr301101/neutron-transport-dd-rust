@@ -1,29 +1,43 @@
 use nalgebra::{DVector, DMatrix};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::f64; // Para float64 (f64)
 use std::io::{self, Write}; // Para input manual y flush
 use once_cell::sync::Lazy;
+
+use serde::{Deserialize, Serialize};
+
+use std::fs::File;
+use std::io::Read;
+
 
 // --- Placeholder para datos de cuadratura ---
 // En el código Python, `DATA` viene de un módulo externo.
 // Para este ejemplo, solo incluimos los datos de S4.
 // mu_m: Cosinos direccionales (sólo positivos).
 // omega_m: Pesos de cuadratura.
-struct QuadratureData {
-    n: i32,
-    mu_m: Vec<f64>,
-    omega_m: Vec<f64>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QuadratureDataFile {
+    pub N: Vec<i32>,
+    pub m: Vec<i32>,
+    pub mu_m: Vec<f64>,
+    pub omega_m: Vec<f64>,
 }
 
-// Datos S4 (ejemplo común) - N=4, N_HALF=2
-pub static QUADRATURE_S4: Lazy<QuadratureData> = Lazy::new(|| {
-    // La asignación de memoria (vec![]) ocurre aquí, en el closure,
-    // y solo se ejecuta la primera vez que se accede a QUADRATURE_S4.
-    QuadratureData {
-        n: 4,
-        mu_m: vec![0.3399810435848563, 0.8611363115940526],
-        omega_m: vec![0.6521451548625461, 0.3478548451374538],
-    }
+const QUADRATURE_FILE_PATH: &str = "data/cuadraturas.json";
+
+pub static ALL_QUADRATURE_DATA: Lazy<QuadratureDataFile> = Lazy::new(|| {
+    // 1. Abrir el archivo
+    let mut file = File::open(QUADRATURE_FILE_PATH)
+        .expect(&format!("No se pudo abrir el archivo de cuadratura: {}", QUADRATURE_FILE_PATH));
+    
+    // 2. Leer el contenido a una cadena
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .expect("Fallo al leer el archivo a una cadena.");
+    
+    // 3. Deserializar la cadena JSON
+    serde_json::from_str(&contents)
+        .expect("Fallo al deserializar los datos de cuadratura JSON. Verifique el formato.")
 });
 
 // =================================================================
@@ -218,20 +232,38 @@ impl Config {
 }
 
     fn weights_directions(&mut self) {
-        // En un caso real, esto cargaría dinámicamente. Aquí usamos el placeholder S4.
-        if self.n == QUADRATURE_S4.n {
-            self.miu_m = DVector::from_vec(QUADRATURE_S4.mu_m.clone());
-            self.omega_m = DVector::from_vec(QUADRATURE_S4.omega_m.clone());
-        } else {
-            eprintln!("ADVERTENCIA: No hay datos para S{}, usando datos S4 por defecto.", self.n);
-            self.n = QUADRATURE_S4.n;
-            self.n_half = (self.n / 2) as usize;
-            self.miu_m = DVector::from_vec(QUADRATURE_S4.mu_m.clone());
-            self.omega_m = DVector::from_vec(QUADRATURE_S4.omega_m.clone());
+        // Acceder a los datos estáticos que ya están deserializados
+        let all_data = &*ALL_QUADRATURE_DATA;
+
+        let n_required = self.n;
+        let mut miu_filtered = Vec::new();
+        let mut omega_filtered = Vec::new();
+        let mut found = false;
+
+        // Iterar y filtrar los datos para el orden N requerido
+        for (i, &n_val) in all_data.N.iter().enumerate() {
+            if n_val == n_required {
+                miu_filtered.push(all_data.mu_m[i]);
+                omega_filtered.push(all_data.omega_m[i]);
+                found = true;
+            }
         }
 
-        if self.miu_m.len() != self.n_half {
-            panic!("Error de datos de cuadratura: N_HALF no coincide con el número de direcciones.");
+        if !found {
+            // Manejo de error si el orden N no existe en el JSON
+            eprintln!("Advertencia: No hay datos para S{}. Se usará S2 por defecto.", n_required);
+            
+            // Revertir a un S2 simple (o forzar un error si es crítico)
+            self.n = 2;
+            self.n_half = 1;
+            self.miu_m = DVector::from_vec(vec![0.577350269189626]);
+            self.omega_m = DVector::from_vec(vec![1.0]);
+        } else {
+            self.n_half = miu_filtered.len();
+
+            // Convertir Vec<f64> a DVector<f64>
+            self.miu_m = DVector::from_vec(miu_filtered);
+            self.omega_m = DVector::from_vec(omega_filtered);
         }
     }
 
@@ -467,6 +499,7 @@ impl Runner {
             psi_right: self.psi_right.clone(),
             psi_left: self.psi_left.clone(),
             converged: self.converged,
+            time:duration
             // Aquí se podría crear una estructura para guardar a archivo,
             // similar al DataFrame/Excel en Python
         }
@@ -477,6 +510,7 @@ impl Runner {
 pub struct RunnerResult {
     pub scalar_flux: DVector<f64>,
     pub iteration: i32,
+    pub time: Duration,
     pub psi_right: DMatrix<f64>,
     pub psi_left: DMatrix<f64>,
     pub converged: bool,
