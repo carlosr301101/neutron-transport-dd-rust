@@ -1,0 +1,9 @@
+[package]
+name = "neutron-diffusion-dd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nalgebra = "0.34.1"
+once_cell = "1.21.3"
+serde = "1.0.228"
