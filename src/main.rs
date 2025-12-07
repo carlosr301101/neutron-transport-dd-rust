@@ -32,11 +32,13 @@ fn main() {
         "--- RESULTADOS DE LA SIMULACIÓN DE TRANSPORTE ---\n\n\
         Tiempo de ejecución: {}\n\
         Iteraciones totales: {}\n\
+        Converge: {}\n\
         \n--- FLUJO ESCALAR (Scalar Flux) ---\n\
         {}",
         // Asumiendo que RunnerResult tiene un campo 'time' o 'duration'
         result.time.as_millis(), // Reemplaza con el campo de tiempo real si existe
         result.iteration,
+        result.converged,
         result.scalar_flux.to_string() // to_string() de nalgebra
                                        // Puedes añadir más datos aquí:
                                        // format!("\n--- MATRIZ PSI ---\n{}", result.psi_matrix.to_string()),
