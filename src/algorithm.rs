@@ -127,7 +127,7 @@ impl Config {
         conf.weights_directions();
         conf.prelim_calculations();
 
-        println!("\nConfiguración completa: {:?}", conf);
+        // println!("\nConfiguración completa: {:?}", conf);
         conf
     }
 
