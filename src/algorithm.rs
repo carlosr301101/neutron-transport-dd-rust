@@ -14,11 +14,19 @@ use std::io::Read;
 // Para este ejemplo, solo incluimos los datos de S4.
 // mu_m: Cosinos direccionales (sólo positivos).
 // omega_m: Pesos de cuadratura.
+/// Quadrature data structure for discrete ordinates method.
+///
+/// Contains quadrature weights and directional cosines for the S_N method.
+/// These are pre-computed values for different quadrature orders.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QuadratureDataFile {
+    /// Quadrature order values (N for S_N method)
     pub N: Vec<i32>,
+    /// Direction indices
     pub m: Vec<i32>,
+    /// Directional cosines (mu values, positive only)
     pub mu_m: Vec<f64>,
+    /// Quadrature weights (omega values)
     pub omega_m: Vec<f64>,
 }
 
@@ -45,7 +53,37 @@ pub static ALL_QUADRATURE_DATA: Lazy<QuadratureDataFile> = Lazy::new(|| {
 // Paso A: Configuración
 // =================================================================
 
-/// Configuración de la geometría, materiales y orden de cuadratura.
+/// Configuration for the neutron transport problem.
+///
+/// Contains geometry, material properties, quadrature settings, and boundary conditions
+/// for a 1D neutron transport simulation using the discrete ordinates (S_N) method.
+///
+/// # Fields
+///
+/// * `epsilon` - Convergence tolerance for the iterative solver
+/// * `max_iter` - Maximum number of iterations allowed
+/// * `num_regions` - Number of spatial regions in the domain
+/// * `num_zones` - Number of material zones
+/// * `nc` - Number of cells per region
+/// * `hr` - Height (thickness) of each region [cm]
+/// * `izl` - Material zone ID for each region (1-based)
+/// * `q` - External source term per region
+/// * `sct` - Total macroscopic cross section per zone
+/// * `scs` - Scattering macroscopic cross section per zone
+/// * `n` - Order of the discrete ordinates (S_N)
+/// * `n_half` - Half of N (number of directions in one hemisphere)
+/// * `miu_m` - Directional cosines (mu values)
+/// * `omega_m` - Quadrature weights
+/// * `reflex_izq` - Reflective boundary condition at left boundary
+/// * `reflex_der` - Reflective boundary condition at right boundary
+/// * `bound_left` - Incident flux at left boundary (if non-reflective)
+/// * `bound_right` - Incident flux at right boundary (if non-reflective)
+/// * `ntc` - Total number of cells (sum of nc)
+/// * `ntp` - Total number of nodes (ntc + 1)
+/// * `sigma_t_vec` - Total cross section per cell
+/// * `sigma_s_vec` - Scattering cross section per cell
+/// * `q_ext_vec` - External source per cell
+/// * `dx_vec` - Cell widths
 #[derive(Debug, Clone)]
 pub struct Config {
     pub epsilon: f64,
@@ -85,7 +123,44 @@ pub struct Config {
 }
 
 impl Config {
-    /// Constructor con entrada automática desde un archivo JSON
+    /// Creates a new configuration by automatically loading from a JSON file.
+    ///
+    /// This method deserializes configuration from a JSON file with the following format:
+    /// ```json
+    /// {
+    ///   "num_regions": 3,
+    ///   "num_zones": 3,
+    ///   "NC": [20, 60, 20],
+    ///   "HR": [10, 30, 10],
+    ///   "IZL": [1, 2, 3],
+    ///   "SCT": [1.0, 0.6, 1],
+    ///   "SCS": [0.99, 0.4, 0.9],
+    ///   "Q": [2, 0, 0],
+    ///   "N": 4,
+    ///   "reflex_izq": 1,
+    ///   "reflex_der": 0,
+    ///   "bound_left": [0, 0],
+    ///   "bound_right": [0, 0]
+    /// }
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `epsilon` - Convergence tolerance for the iterative solver
+    /// * `max_iter` - Maximum number of iterations
+    /// * `input_path` - Path to the JSON configuration file
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be opened or deserialized.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use neutron_diffusion_dd::algorithm::Config;
+    ///
+    /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
+    /// ```
     pub fn new_auto(epsilon: f64, max_iter: i32, input_path: &str) -> Self {
         let mut conf = Config {
             epsilon,
@@ -207,6 +282,23 @@ impl Config {
         conf
     }
 
+    /// Creates a new configuration through interactive manual input.
+    ///
+    /// Prompts the user for all configuration parameters interactively.
+    /// This is useful for testing and exploration.
+    ///
+    /// # Arguments
+    ///
+    /// * `epsilon` - Convergence tolerance for the iterative solver
+    /// * `max_iter` - Maximum number of iterations
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use neutron_diffusion_dd::algorithm::Config;
+    ///
+    /// let config = Config::new_manual(1e-5, 2000);
+    /// ```
     // Implementación simplificada del constructor manual
     pub fn new_manual(epsilon: f64, max_iter: i32) -> Self {
         println!("\n--- CONFIGURACIÓN MANUAL ---");
@@ -552,7 +644,31 @@ impl Config {
 // Paso B: Runner (Motor de Cálculo)
 // =================================================================
 
-/// Motor de cálculo que ejecuta el algoritmo $S_N$ por barrido (Sweep).
+/// Solves neutron transport problems using the Discrete Ordinates (S_N) method with domain decomposition.
+///
+/// The `Runner` struct implements the sweep-based algorithm for solving the one-dimensional
+/// neutron transport equation. It maintains the angular flux distribution across spatial
+/// nodes and angular directions, and iteratively updates the scalar flux until convergence.
+///
+/// # Fields
+///
+/// * `config` - The configuration parameters defining the problem domain and materials
+/// * `converged` - Flag indicating whether the iterative solver has converged
+/// * `iteration` - Current iteration count in the convergence loop
+/// * `psi_right` - Angular flux for rightward-moving directions (μ > 0), dimensions: [spatial_nodes × n_half]
+/// * `psi_left` - Angular flux for leftward-moving directions (μ < 0), dimensions: [spatial_nodes × n_half]
+/// * `scalar_flux` - Integrated angular flux over all directions, dimensions: [spatial_cells]
+/// * `total_source` - Total source term including external and scattering contributions, dimensions: [spatial_cells]
+///
+/// # Example
+///
+/// ```no_run
+/// use neutron_diffusion_dd::algorithm::{Config, Runner};
+///
+/// let config = Config::new_auto(1e-5, 2000, "data/input.json");
+/// let mut runner = Runner::new(config);
+/// let result = runner.run();
+/// ```
 pub struct Runner {
     config: Config,
     converged: bool,
