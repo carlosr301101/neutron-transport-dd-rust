@@ -1,15 +1,42 @@
 mod algorithm;
 use algorithm::{Config, Runner, RunnerResult};
+use clap::Parser;
 use std::fs::File;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 extern crate nalgebra;
 extern crate once_cell;
 
+#[derive(Parser, Debug)]
+#[command(name = "neutron-diffusion-dd")]
+#[command(about = "Simulador de difusión de neutrones S_N", long_about = None)]
+struct Args {
+    /// Ruta al archivo input.json para modo automático
+    #[arg(short, long, value_name = "FILE")]
+    input: Option<String>,
+
+    /// Tolerancia de convergencia (por defecto 1e-5)
+    #[arg(short, long, default_value = "0.00001")]
+    epsilon: f64,
+
+    /// Número máximo de iteraciones (por defecto 2000)
+    #[arg(short, long, default_value = "2000")]
+    max_iter: i32,
+}
+
 fn main() {
+    let args = Args::parse();
+
     // 1. Ejecutar el cálculo
-    // Esto asume que tienes una función new_manual, o la carga manual de datos.
-    let conf = Config::new_manual(1e-5, 2000);
+    let conf = if let Some(input_path) = &args.input {
+        // Modo automático: leer desde input.json
+        println!("\n📂 Usando archivo de configuración: {}", input_path);
+        Config::new_auto(args.epsilon, args.max_iter, input_path)
+    } else {
+        // Modo manual: solicitar entrada interactiva
+        println!("\n⌨️  Modo manual: ingrese los parámetros interactivamente");
+        Config::new_manual(args.epsilon, args.max_iter)
+    };
     let mut runner = Runner::new(conf);
     let result = runner.run();
 

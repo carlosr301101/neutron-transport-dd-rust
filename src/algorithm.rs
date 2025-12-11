@@ -85,6 +85,128 @@ pub struct Config {
 }
 
 impl Config {
+    /// Constructor con entrada automática desde un archivo JSON
+    pub fn new_auto(epsilon: f64, max_iter: i32, input_path: &str) -> Self {
+        let mut conf = Config {
+            epsilon,
+            max_iter,
+            num_regions: 0,
+            num_zones: 0,
+            nc: DVector::zeros(0),
+            hr: DVector::zeros(0),
+            izl: DVector::zeros(0),
+            q: DVector::zeros(0),
+            sct: DVector::zeros(0),
+            scs: DVector::zeros(0),
+            n: 0,
+            n_half: 0,
+            miu_m: DVector::zeros(0),
+            omega_m: DVector::zeros(0),
+            reflex_izq: false,
+            reflex_der: false,
+            bound_left: DVector::zeros(0),
+            bound_right: DVector::zeros(0),
+            ntc: 0,
+            ntp: 0,
+            sigma_t_vec: DVector::zeros(0),
+            sigma_s_vec: DVector::zeros(0),
+            q_ext_vec: DVector::zeros(0),
+            dx_vec: DVector::zeros(0),
+        };
+
+        // Leer archivo JSON
+        let mut file = match File::open(input_path) {
+            Ok(f) => f,
+            Err(e) => panic!("No se pudo abrir {}: {}", input_path, e),
+        };
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Fallo al leer input.json");
+
+        #[derive(Deserialize)]
+        struct InputFile {
+            num_regions: usize,
+            num_zones: usize,
+            #[serde(rename = "NC")]
+            nc: Vec<usize>,
+            #[serde(rename = "HR")]
+            hr: Vec<f64>,
+            #[serde(rename = "IZL")]
+            izl: Vec<usize>,
+            #[serde(rename = "SCT")]
+            sct: Vec<f64>,
+            #[serde(rename = "SCS")]
+            scs: Vec<f64>,
+            #[serde(rename = "Q")]
+            q: Vec<f64>,
+            #[serde(rename = "N")]
+            n: i32,
+            reflex_izq: i32,
+            reflex_der: i32,
+            bound_left: Vec<f64>,
+            bound_right: Vec<f64>,
+        }
+
+        let data: InputFile = serde_json::from_str(&contents)
+            .expect("Fallo al deserializar input.json");
+
+        conf.num_regions = data.num_regions;
+        conf.num_zones = data.num_zones;
+
+        if data.nc.len() != conf.num_regions || data.hr.len() != conf.num_regions {
+            panic!("`NC` o `HR` no tienen longitud num_regions");
+        }
+        conf.nc = DVector::from_vec(data.nc);
+        conf.hr = DVector::from_vec(data.hr);
+
+        if data.izl.len() != conf.num_regions {
+            panic!("`IZL` no tiene longitud num_regions");
+        }
+        conf.izl = DVector::from_vec(data.izl);
+
+        if data.sct.len() != conf.num_zones || data.scs.len() != conf.num_zones {
+            panic!("`SCT` o `SCS` no tienen longitud num_zones");
+        }
+        conf.sct = DVector::from_vec(data.sct);
+        conf.scs = DVector::from_vec(data.scs);
+
+        if data.q.len() != conf.num_regions {
+            panic!("`Q` no tiene longitud num_regions");
+        }
+        conf.q = DVector::from_vec(data.q);
+
+        conf.n = if data.n % 2 == 0 { data.n } else { data.n - 1 };
+        if conf.n < 2 {
+            conf.n = 2;
+        }
+        conf.n_half = (conf.n / 2) as usize;
+
+        conf.reflex_izq = data.reflex_izq != 0;
+        conf.reflex_der = data.reflex_der != 0;
+
+        if !conf.reflex_izq {
+            let mut bl = data.bound_left;
+            bl.resize(conf.n_half, 0.0);
+            conf.bound_left = DVector::from_vec(bl);
+        } else {
+            conf.bound_left = DVector::from_element(conf.n_half, 0.0);
+        }
+
+        if !conf.reflex_der {
+            let mut br = data.bound_right;
+            br.resize(conf.n_half, 0.0);
+            conf.bound_right = DVector::from_vec(br);
+        } else {
+            conf.bound_right = DVector::from_element(conf.n_half, 0.0);
+        }
+
+        conf.weights_directions();
+        conf.prelim_calculations();
+
+        println!("\n--- CONFIGURACIÓN CARGADA DESDE {} ---", input_path);
+        conf
+    }
+
     // Implementación simplificada del constructor manual
     pub fn new_manual(epsilon: f64, max_iter: i32) -> Self {
         println!("\n--- CONFIGURACIÓN MANUAL ---");
@@ -650,3 +772,166 @@ pub struct RunnerResult {
     pub psi_left: DMatrix<f64>,
     pub converged: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_new_auto_basic() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+        assert_eq!(config.num_regions, 3);
+        assert_eq!(config.num_zones, 3);
+        assert_eq!(config.n, 4);
+    }
+
+    #[test]
+    fn test_weights_directions_s4() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+        // S4 debe tener 2 direcciones
+        assert_eq!(config.n_half, 2);
+        assert_eq!(config.miu_m.len(), 2);
+        assert_eq!(config.omega_m.len(), 2);
+
+        // Verificar que los pesos integran a 1 (aproximadamente)
+        let sum_weights: f64 = config.omega_m.iter().sum();
+        assert!((sum_weights - 1.0).abs() < 1e-10, "Suma de pesos debe ser 1");
+    }
+
+    #[test]
+    fn test_prelim_calculations_vectors() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+
+        // Verificar tamaños
+        assert_eq!(config.sigma_t_vec.len(), config.ntc);
+        assert_eq!(config.sigma_s_vec.len(), config.ntc);
+        assert_eq!(config.q_ext_vec.len(), config.ntc);
+        assert_eq!(config.dx_vec.len(), config.ntc);
+
+        // Verificar valores no negativos (excepto en especiales)
+        for i in 0..config.ntc {
+            assert!(config.sigma_t_vec[i] > 0.0, "Sigma total debe ser positiva");
+            assert!(
+                config.sigma_s_vec[i] >= 0.0,
+                "Sigma scattering debe ser no negativa"
+            );
+            assert!(config.dx_vec[i] > 0.0, "dx debe ser positivo");
+        }
+    }
+
+    #[test]
+    fn test_runner_initialization() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+        let runner = Runner::new(config.clone());
+
+        // Verificar que el runner se inicializó correctamente
+        assert!(!runner.converged);
+        assert_eq!(runner.iteration, 0);
+        assert_eq!(runner.scalar_flux.len(), config.ntc);
+    }
+
+    #[test]
+    fn test_convergence_check_negative_flux() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+        let mut runner = Runner::new(config);
+
+        // Crear un flujo antiguo artificial
+        let old_flux = DVector::from_element(runner.scalar_flux.len(), 1.0);
+        runner.scalar_flux.fill(1.01);
+
+        // El cambio es 1% = 1e-2, mayor que 1e-5
+        assert!(!runner.check_convergence(&old_flux));
+    }
+
+    #[test]
+    fn test_epsilon_effect_on_convergence() {
+        // Epsilon más grande = menos iteraciones
+        let config_loose = Config::new_auto(1e-2, 500, "data/input.json");
+        let mut runner_loose = Runner::new(config_loose);
+        let result_loose = runner_loose.run();
+
+        // Epsilon más pequeño = más iteraciones (generalmente)
+        let config_tight = Config::new_auto(1e-7, 5000, "data/input.json");
+        let mut runner_tight = Runner::new(config_tight);
+        let result_tight = runner_tight.run();
+
+        // Ambas deben converger
+        assert!(result_loose.converged);
+        assert!(result_tight.converged);
+
+        // El criterio más flojo debería converger más rápido
+        assert!(
+            result_loose.iteration <= result_tight.iteration,
+            "Criterio flojo debe converger más rápido"
+        );
+    }
+
+    #[test]
+    fn test_reflect_boundary_conditions() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+
+        // reflex_izq debe ser true
+        assert!(config.reflex_izq);
+        assert!(!config.reflex_der);
+
+        // Los vectores de frontera deben ser ceros (según input.json)
+        for i in 0..config.n_half {
+            assert_eq!(config.bound_left[i], 0.0);
+            assert_eq!(config.bound_right[i], 0.0);
+        }
+    }
+
+    #[test]
+    fn test_material_zones_mapping() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+
+        // Verificar que las zonas se mapean correctamente
+        for r in 0..config.num_regions {
+            let zone_idx = config.izl[r] - 1; // Convertir a base-0
+            assert!(zone_idx < config.num_zones, "Índice de zona inválido");
+
+            // Verificar que los valores están en rango
+            assert!(zone_idx < config.sct.len());
+            assert!(zone_idx < config.scs.len());
+        }
+    }
+
+    #[test]
+    fn test_quadrature_weights_positive() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+
+        // Todos los pesos deben ser positivos
+        for i in 0..config.n_half {
+            assert!(config.omega_m[i] > 0.0, "Peso de cuadratura debe ser positivo");
+            assert!(config.miu_m[i] > 0.0, "Coseno director debe ser positivo");
+            assert!(config.miu_m[i] <= 1.0, "Coseno debe estar en [0, 1]");
+        }
+    }
+
+    #[test]
+    fn test_scalar_flux_non_negative() {
+        let config = Config::new_auto(1e-5, 2000, "data/input.json");
+        let mut runner = Runner::new(config);
+        let result = runner.run();
+
+        // Todos los valores del flujo escalar deben ser no negativos
+        for i in 0..result.scalar_flux.len() {
+            assert!(
+                result.scalar_flux[i] >= 0.0,
+                "Flujo escalar debe ser no negativo"
+            );
+        }
+    }
+
+    #[test]
+    fn test_runner_max_iterations_limit() {
+        // Usar epsilon muy pequeño para que no converja rápidamente
+        let config = Config::new_auto(1e-15, 100, "data/input.json");
+        let mut runner = Runner::new(config);
+        let result = runner.run();
+
+        // No debe exceder max_iter
+        assert!(result.iteration <= 100, "No debe exceder max_iter");
+    }
+}
+

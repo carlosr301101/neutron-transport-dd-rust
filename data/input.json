@@ -8,8 +8,8 @@
     "SCS": [0.99, 0.4, 0.9],
     "Q": [2, 0, 0],
     "N": 4,
-    "reflex_izq": 0,
-    "reflex_der": 1,
+    "reflex_izq": 1,
+    "reflex_der": 0,
     "bound_left": [0, 0],
     "bound_right": [0, 0]
 }
