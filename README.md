@@ -117,12 +117,6 @@ The S_N method discretizes the angular variable using Gaussian quadrature. The s
 3. **Update Scalar Flux**: Integrate angular fluxes over all directions
 4. **Convergence Check**: Compare relative change in scalar flux with tolerance
 
-### Convergence Criterion
-
-Iteration stops when:
-$$\max_i \frac{|\phi_i^{n+1} - \phi_i^n|}{\max(|\phi_i^{n+1}|, 1.0)} < \epsilon$$
-
-where ε is the convergence tolerance.
 
 ## Output
 
