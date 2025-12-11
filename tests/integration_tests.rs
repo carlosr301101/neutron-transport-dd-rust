@@ -15,7 +15,7 @@ fn test_auto_input_loading() {
     // Validar que los valores se cargaron correctamente
     assert_eq!(config.num_regions, 3, "Debe haber 3 regiones");
     assert_eq!(config.num_zones, 3, "Debe haber 3 zonas");
-    
+
     // Verificar datos de NC (celdas por región)
     assert_eq!(config.nc.len(), 3, "NC debe tener 3 elementos");
     assert_eq!(config.nc[0], 20, "Primera región debe tener 20 celdas");
@@ -24,9 +24,18 @@ fn test_auto_input_loading() {
 
     // Verificar datos de HR (espesor)
     assert_eq!(config.hr.len(), 3, "HR debe tener 3 elementos");
-    assert!((config.hr[0] - 10.0).abs() < 1e-10, "Primera región espesor 10cm");
-    assert!((config.hr[1] - 30.0).abs() < 1e-10, "Segunda región espesor 30cm");
-    assert!((config.hr[2] - 10.0).abs() < 1e-10, "Tercera región espesor 10cm");
+    assert!(
+        (config.hr[0] - 10.0).abs() < 1e-10,
+        "Primera región espesor 10cm"
+    );
+    assert!(
+        (config.hr[1] - 30.0).abs() < 1e-10,
+        "Segunda región espesor 30cm"
+    );
+    assert!(
+        (config.hr[2] - 10.0).abs() < 1e-10,
+        "Tercera región espesor 10cm"
+    );
 
     // Verificar IZL (zonas de material)
     assert_eq!(config.izl.len(), 3, "IZL debe tener 3 elementos");
@@ -36,9 +45,18 @@ fn test_auto_input_loading() {
 
     // Verificar propiedades materiales
     assert_eq!(config.sct.len(), 3, "SCT debe tener 3 elementos");
-    assert!((config.sct[0] - 1.0).abs() < 1e-10, "Zona 1 sigma total = 1.0");
-    assert!((config.sct[1] - 0.6).abs() < 1e-10, "Zona 2 sigma total = 0.6");
-    assert!((config.sct[2] - 1.0).abs() < 1e-10, "Zona 3 sigma total = 1.0");
+    assert!(
+        (config.sct[0] - 1.0).abs() < 1e-10,
+        "Zona 1 sigma total = 1.0"
+    );
+    assert!(
+        (config.sct[1] - 0.6).abs() < 1e-10,
+        "Zona 2 sigma total = 0.6"
+    );
+    assert!(
+        (config.sct[2] - 1.0).abs() < 1e-10,
+        "Zona 3 sigma total = 1.0"
+    );
 
     // Verificar orden de cuadratura
     assert_eq!(config.n, 4, "Orden debe ser S4");
@@ -69,28 +87,58 @@ fn test_property_vectors() {
     let config = Config::new_auto(1e-5, 2000, "data/input.json");
 
     // Verificar que los vectores de propiedades tienen tamaño correcto
-    assert_eq!(config.sigma_t_vec.len(), 100, "sigma_t debe tener 100 elementos");
-    assert_eq!(config.sigma_s_vec.len(), 100, "sigma_s debe tener 100 elementos");
-    assert_eq!(config.q_ext_vec.len(), 100, "q_ext debe tener 100 elementos");
+    assert_eq!(
+        config.sigma_t_vec.len(),
+        100,
+        "sigma_t debe tener 100 elementos"
+    );
+    assert_eq!(
+        config.sigma_s_vec.len(),
+        100,
+        "sigma_s debe tener 100 elementos"
+    );
+    assert_eq!(
+        config.q_ext_vec.len(),
+        100,
+        "q_ext debe tener 100 elementos"
+    );
     assert_eq!(config.dx_vec.len(), 100, "dx debe tener 100 elementos");
 
     // Verificar que los valores coinciden con la región y zona
     // Región 1 (celdas 0-19): zona 1, sigma_t=1.0
     for i in 0..20 {
-        assert!((config.sigma_t_vec[i] - 1.0).abs() < 1e-10, "Región 1 sigma_t=1.0");
-        assert!((config.sigma_s_vec[i] - 0.99).abs() < 1e-10, "Región 1 sigma_s=0.99");
+        assert!(
+            (config.sigma_t_vec[i] - 1.0).abs() < 1e-10,
+            "Región 1 sigma_t=1.0"
+        );
+        assert!(
+            (config.sigma_s_vec[i] - 0.99).abs() < 1e-10,
+            "Región 1 sigma_s=0.99"
+        );
     }
 
     // Región 2 (celdas 20-79): zona 2, sigma_t=0.6
     for i in 20..80 {
-        assert!((config.sigma_t_vec[i] - 0.6).abs() < 1e-10, "Región 2 sigma_t=0.6");
-        assert!((config.sigma_s_vec[i] - 0.4).abs() < 1e-10, "Región 2 sigma_s=0.4");
+        assert!(
+            (config.sigma_t_vec[i] - 0.6).abs() < 1e-10,
+            "Región 2 sigma_t=0.6"
+        );
+        assert!(
+            (config.sigma_s_vec[i] - 0.4).abs() < 1e-10,
+            "Región 2 sigma_s=0.4"
+        );
     }
 
     // Región 3 (celdas 80-99): zona 3, sigma_t=1.0
     for i in 80..100 {
-        assert!((config.sigma_t_vec[i] - 1.0).abs() < 1e-10, "Región 3 sigma_t=1.0");
-        assert!((config.sigma_s_vec[i] - 0.9).abs() < 1e-10, "Región 3 sigma_s=0.9");
+        assert!(
+            (config.sigma_t_vec[i] - 1.0).abs() < 1e-10,
+            "Región 3 sigma_t=1.0"
+        );
+        assert!(
+            (config.sigma_s_vec[i] - 0.9).abs() < 1e-10,
+            "Región 3 sigma_s=0.9"
+        );
     }
 }
 
@@ -127,11 +175,18 @@ fn test_runner_simulation() {
 
     // Verificar que el número de iteraciones es razonable
     assert!(result.iteration > 0, "Debe haber al menos 1 iteración");
-    assert!(result.iteration < 2000, "Debe converger antes de 2000 iteraciones");
+    assert!(
+        result.iteration < 2000,
+        "Debe converger antes de 2000 iteraciones"
+    );
 
     // Verificar que el flujo escalar tiene valores positivos
-    assert_eq!(result.scalar_flux.len(), 100, "Flujo escalar debe tener 100 elementos");
-    
+    assert_eq!(
+        result.scalar_flux.len(),
+        100,
+        "Flujo escalar debe tener 100 elementos"
+    );
+
     let max_flux = result.scalar_flux.max();
     assert!(max_flux > 0.0, "Flujo escalar debe ser positivo");
 
@@ -147,9 +202,21 @@ fn test_angular_flux_dimensions() {
     let result = runner.run();
 
     // psi_right y psi_left deben ser [NTP x n_half]
-    assert_eq!(result.psi_right.nrows(), 101, "psi_right debe tener 101 filas (nodos)");
-    assert_eq!(result.psi_right.ncols(), 2, "psi_right debe tener 2 columnas (n_half)");
-    assert_eq!(result.psi_left.nrows(), 101, "psi_left debe tener 101 filas");
+    assert_eq!(
+        result.psi_right.nrows(),
+        101,
+        "psi_right debe tener 101 filas (nodos)"
+    );
+    assert_eq!(
+        result.psi_right.ncols(),
+        2,
+        "psi_right debe tener 2 columnas (n_half)"
+    );
+    assert_eq!(
+        result.psi_left.nrows(),
+        101,
+        "psi_left debe tener 101 filas"
+    );
     assert_eq!(result.psi_left.ncols(), 2, "psi_left debe tener 2 columnas");
 }
 
@@ -163,8 +230,16 @@ fn test_boundary_conditions() {
     assert!(!config.reflex_der, "No debe tener reflexión derecha");
 
     // Los vectores de frontera deben tener el tamaño correcto
-    assert_eq!(config.bound_left.len(), 2, "bound_left debe tener n_half elementos");
-    assert_eq!(config.bound_right.len(), 2, "bound_right debe tener n_half elementos");
+    assert_eq!(
+        config.bound_left.len(),
+        2,
+        "bound_left debe tener n_half elementos"
+    );
+    assert_eq!(
+        config.bound_right.len(),
+        2,
+        "bound_right debe tener n_half elementos"
+    );
 }
 
 /// Test 8: Diferentes valores de epsilon (convergencia más rápida)
@@ -196,7 +271,7 @@ fn test_output_file_creation() {
     // Buscar si se creó algún archivo con patrón data_*.out en el directorio actual
     // El archivo se crea en la raíz del proyecto durante ejecución de tests
     let current_dir = std::env::current_dir().expect("No se puede obtener directorio actual");
-    
+
     if let Ok(entries) = fs::read_dir(current_dir) {
         let out_files: Vec<_> = entries
             .filter_map(|e| e.ok())
@@ -209,17 +284,22 @@ fn test_output_file_creation() {
         // Si hay archivos .out, validar el más reciente
         if !out_files.is_empty() {
             if let Some(last_file) = out_files.last() {
-                let content = fs::read_to_string(last_file.path())
-                    .expect("Debe poder leer archivo");
-                
-                assert!(content.contains("RESULTADOS DE LA SIMULACIÓN"), "Debe tener título");
+                let content =
+                    fs::read_to_string(last_file.path()).expect("Debe poder leer archivo");
+
+                assert!(
+                    content.contains("RESULTADOS DE LA SIMULACIÓN"),
+                    "Debe tener título"
+                );
                 // Buscar "Converge" (sin acentos) o variantes
                 assert!(
-                    content.to_lowercase().contains("converge") 
-                        || content.contains("Iteraciones"),
+                    content.to_lowercase().contains("converge") || content.contains("Iteraciones"),
                     "Debe tener información de convergencia o iteraciones"
                 );
-                assert!(content.contains("FLUJO ESCALAR"), "Debe tener sección de flujo");
+                assert!(
+                    content.contains("FLUJO ESCALAR"),
+                    "Debe tener sección de flujo"
+                );
             }
         }
         // Si no hay archivos, simplemente pasamos (pueden no existir según dónde se ejecute)

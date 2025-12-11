@@ -222,8 +222,8 @@ impl Config {
             bound_right: Vec<f64>,
         }
 
-        let data: InputFile = serde_json::from_str(&contents)
-            .expect("Fallo al deserializar input.json");
+        let data: InputFile =
+            serde_json::from_str(&contents).expect("Fallo al deserializar input.json");
 
         conf.num_regions = data.num_regions;
         conf.num_zones = data.num_zones;
@@ -494,8 +494,8 @@ impl Config {
         file.read_to_string(&mut contents)
             .expect("Fallo al leer data/input.json");
 
-        let data: InputFile = serde_json::from_str(&contents)
-            .expect("Fallo al deserializar data/input.json");
+        let data: InputFile =
+            serde_json::from_str(&contents).expect("Fallo al deserializar data/input.json");
 
         // Asignaciones básicas
         self.num_regions = data.num_regions;
@@ -968,7 +968,10 @@ mod tests {
 
         // Verificar que los pesos integran a 1 (aproximadamente)
         let sum_weights: f64 = config.omega_m.iter().sum();
-        assert!((sum_weights - 1.0).abs() < 1e-10, "Suma de pesos debe ser 1");
+        assert!(
+            (sum_weights - 1.0).abs() < 1e-10,
+            "Suma de pesos debe ser 1"
+        );
     }
 
     #[test]
@@ -1075,7 +1078,10 @@ mod tests {
 
         // Todos los pesos deben ser positivos
         for i in 0..config.n_half {
-            assert!(config.omega_m[i] > 0.0, "Peso de cuadratura debe ser positivo");
+            assert!(
+                config.omega_m[i] > 0.0,
+                "Peso de cuadratura debe ser positivo"
+            );
             assert!(config.miu_m[i] > 0.0, "Coseno director debe ser positivo");
             assert!(config.miu_m[i] <= 1.0, "Coseno debe estar en [0, 1]");
         }
@@ -1107,4 +1113,3 @@ mod tests {
         assert!(result.iteration <= 100, "No debe exceder max_iter");
     }
 }
-
