@@ -245,6 +245,110 @@ impl Config {
         }
     }
 
+    fn auto_imput(&mut self) {
+        // Lee `data/input.json` y llena los campos relevantes de `Config`.
+        #[derive(Deserialize)]
+        struct InputFile {
+            num_regions: usize,
+            num_zones: usize,
+            #[serde(rename = "NC")]
+            nc: Vec<usize>,
+            #[serde(rename = "HR")]
+            hr: Vec<f64>,
+            #[serde(rename = "IZL")]
+            izl: Vec<usize>,
+            #[serde(rename = "SCT")]
+            sct: Vec<f64>,
+            #[serde(rename = "SCS")]
+            scs: Vec<f64>,
+            #[serde(rename = "Q")]
+            q: Vec<f64>,
+            #[serde(rename = "N")]
+            n: i32,
+            reflex_izq: i32,
+            reflex_der: i32,
+            bound_left: Vec<f64>,
+            bound_right: Vec<f64>,
+        }
+
+        let path = "data/input.json";
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(e) => panic!("No se pudo abrir {}: {}", path, e),
+        };
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("Fallo al leer data/input.json");
+
+        let data: InputFile = serde_json::from_str(&contents)
+            .expect("Fallo al deserializar data/input.json");
+
+        // Asignaciones básicas
+        self.num_regions = data.num_regions;
+        self.num_zones = data.num_zones;
+
+        // Validaciones y asignación de vectores
+        if data.nc.len() != self.num_regions {
+            panic!("`NC` no tiene la longitud esperada (num_regions)");
+        }
+        if data.hr.len() != self.num_regions {
+            panic!("`HR` no tiene la longitud esperada (num_regions)");
+        }
+        self.nc = DVector::from_vec(data.nc);
+        self.hr = DVector::from_vec(data.hr);
+
+        if data.izl.len() != self.num_regions {
+            panic!("`IZL` no tiene la longitud esperada (num_regions)");
+        }
+        self.izl = DVector::from_vec(data.izl);
+
+        if data.sct.len() != self.num_zones {
+            panic!("`SCT` no tiene la longitud esperada (num_zones)");
+        }
+        if data.scs.len() != self.num_zones {
+            panic!("`SCS` no tiene la longitud esperada (num_zones)");
+        }
+        self.sct = DVector::from_vec(data.sct);
+        self.scs = DVector::from_vec(data.scs);
+
+        if data.q.len() != self.num_regions {
+            panic!("`Q` no tiene la longitud esperada (num_regions)");
+        }
+        self.q = DVector::from_vec(data.q);
+
+        // Orden de cuadratura (asegurar par)
+        self.n = if data.n % 2 == 0 { data.n } else { data.n - 1 };
+        if self.n < 2 {
+            self.n = 2;
+        }
+        self.n_half = (self.n / 2) as usize;
+
+        // Condiciones de frontera
+        self.reflex_izq = data.reflex_izq != 0;
+        self.reflex_der = data.reflex_der != 0;
+
+        if !self.reflex_izq {
+            // Asegurar tamaño correcto o rellenar con ceros
+            let mut bl = data.bound_left;
+            bl.resize(self.n_half, 0.0);
+            self.bound_left = DVector::from_vec(bl);
+        } else {
+            self.bound_left = DVector::from_element(self.n_half, 0.0);
+        }
+
+        if !self.reflex_der {
+            let mut br = data.bound_right;
+            br.resize(self.n_half, 0.0);
+            self.bound_right = DVector::from_vec(br);
+        } else {
+            self.bound_right = DVector::from_element(self.n_half, 0.0);
+        }
+
+        // Completar pesos y direcciones y cálculos preliminares
+        self.weights_directions();
+        self.prelim_calculations();
+    }
+
     fn weights_directions(&mut self) {
         // Acceder a los datos estáticos que ya están deserializados
         let all_data = &*ALL_QUADRATURE_DATA;
