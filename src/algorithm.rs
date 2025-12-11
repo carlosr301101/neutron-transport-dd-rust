@@ -686,6 +686,27 @@ pub struct Runner {
 }
 
 impl Runner {
+    /// Constructs a new `Runner` with the provided configuration.
+    ///
+    /// Initializes all angular flux matrices with zeros and applies initial boundary conditions
+    /// from the configuration. The solver is ready to start iterations after construction.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - A `Config` struct containing all problem parameters
+    ///
+    /// # Returns
+    ///
+    /// A new `Runner` instance with initialized flux matrices and boundary conditions applied.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use neutron_diffusion_dd::algorithm::{Config, Runner};
+    ///
+    /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
+    /// let runner = Runner::new(config);
+    /// ```
     pub fn new(config: Config) -> Self {
         let ntp = config.ntp;
         let ntc = config.ntc;
@@ -718,6 +739,14 @@ impl Runner {
         }
     }
 
+    /// Updates angular fluxes at boundaries when reflective conditions are applied.
+    ///
+    /// For reflective boundaries, the outgoing flux at one boundary becomes the incoming
+    /// flux at that boundary. Specifically:
+    /// - At the left boundary (x=0): leftward flux becomes rightward flux
+    /// - At the right boundary (x=L): rightward flux becomes leftward flux
+    ///
+    /// This method is called at the beginning of each iteration before the sweep algorithm.
     fn update_reflective_boundaries(&mut self) {
         // Izquierda (x=0): Lo que sale hacia la izquierda (PSI_LEFT[0]) entra hacia la derecha
         if self.config.reflex_izq {
@@ -837,6 +866,34 @@ impl Runner {
         rel_error < self.config.epsilon
     }
 
+    /// Runs the iterative S_N solver until convergence or maximum iterations.
+    ///
+    /// Executes the main solution algorithm:
+    /// 1. Updates reflective boundary conditions if applicable
+    /// 2. Performs a complete sweep of angular fluxes in all spatial cells and directions
+    /// 3. Computes scalar flux by integrating angular fluxes
+    /// 4. Checks convergence based on relative change in scalar flux
+    ///
+    /// The iteration process continues until either the convergence tolerance is achieved
+    /// or the maximum number of iterations is exceeded. Convergence diagnostics are printed
+    /// every 100 iterations.
+    ///
+    /// # Returns
+    ///
+    /// A `RunnerResult` containing the final scalar flux distribution, convergence status,
+    /// iteration count, and computation time.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use neutron_diffusion_dd::algorithm::{Config, Runner};
+    ///
+    /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
+    /// let mut runner = Runner::new(config);
+    /// let result = runner.run();
+    /// println!("Converged: {}", result.converged);
+    /// println!("Iterations: {}", result.iteration);
+    /// ```
     pub fn run(&mut self) -> RunnerResult {
         println!("\n--- INICIANDO CÁLCULO S{} ---", self.config.n);
         let start = Instant::now();
