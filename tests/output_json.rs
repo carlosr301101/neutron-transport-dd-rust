@@ -242,3 +242,33 @@ fn json_list_of_objects_is_accepted() {
     assert_eq!(payload["runs"][0]["config_name"], "json_config_001");
     assert_eq!(payload["runs"][1]["config_name"], "json_config_002");
 }
+
+#[test]
+fn configuration_is_written_before_the_calculations() {
+    let home = TempDir::new().expect("temp dir");
+    let config_path = home.path().join("config.json");
+    fs::write(&config_path, run_config_json()).expect("write config");
+
+    let output = run_cli(
+        home.path(),
+        &["run", "--json", config_path.to_str().unwrap()],
+    );
+    assert!(output.status.success(), "{output:?}");
+
+    let path = home.path().join("outputs/results/output_1d_001.json");
+    let text = fs::read_to_string(&path).expect("read output");
+    let position = |key: &str| {
+        text.find(&format!("\"{key}\""))
+            .unwrap_or_else(|| panic!("missing key {key}"))
+    };
+
+    // Configuration first, then the calculation results, scalar flux first.
+    assert!(position("configuration") < position("scalar_flux"));
+    assert!(position("scalar_flux") < position("angular_flux"));
+    assert!(position("angular_flux") < position("miu"));
+    assert!(position("miu") < position("omega"));
+    assert!(position("omega") < position("iteration"));
+    // Configuration fields keep the schema order.
+    assert!(position("num_regions") < position("SCS"));
+    assert!(position("SCS") < position("MODE"));
+}

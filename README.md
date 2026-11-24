@@ -227,6 +227,11 @@ embedded in every output run under `configuration`.
 A failed configuration is recorded as `{"config_name", "error", "timestamp"}`
 and does not abort the remaining runs.
 
+Keys are written in the order shown: the run identifier and its
+`configuration` first, then the calculation results starting with
+`scalar_flux`. This is stable output order (not alphabetical), so the file is
+easier to inspect with `jq` or a text editor.
+
 ## Numerical parity
 
 The test-suite reproduces the Python reference results exactly (f64):

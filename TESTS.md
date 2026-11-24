@@ -151,7 +151,9 @@ numeric fields, JSON-serializable summary.
 - explicit `--output`,
 - `--manual` through stdin,
 - missing `--json`/`--manual` error,
-- JSON list of objects.
+- JSON list of objects,
+- key order: `configuration` before `scalar_flux`, with `scalar_flux` as the
+  first calculation result.
 
 ## Reference environment
 
