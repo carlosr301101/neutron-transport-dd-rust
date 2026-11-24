@@ -15,6 +15,9 @@
 //! * Convergence is `max |phi_new - phi_old| / |phi_old| < epsilon`, with the
 //!   zero-flux cells falling back to the absolute difference.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::config::{Config, Mode};
 use crate::error::SolverError;
 use crate::power;
@@ -27,6 +30,7 @@ pub struct Runner {
     config: Config,
     method: Method,
     theta: Option<Vec<Vec<f64>>>,
+    cancel: Option<Arc<AtomicBool>>,
 
     // Angular fluxes at the nodes: (ntp, n_half).
     psi_right: Vec<Vec<f64>>,
@@ -135,6 +139,7 @@ impl Runner {
             config,
             method,
             theta,
+            cancel: None,
             psi_right,
             psi_left,
             angular_flux: vec![vec![0.0; n]; ntc],
@@ -169,7 +174,7 @@ impl Runner {
         match self.config.mode {
             Mode::Eigenvalue => self.eigenvalue_iteration()?,
             Mode::FixedK | Mode::Driven => self.fixed_k_iteration()?,
-            Mode::FixedSource => self.fixed_source_iteration(),
+            Mode::FixedSource => self.fixed_source_iteration()?,
         }
         self.apply_power_normalization()?;
         Ok(self.build_result())
@@ -282,10 +287,24 @@ impl Runner {
     // Iteration strategies
     // -----------------------------------------------------------------
 
-    fn fixed_source_iteration(&mut self) {
+    /// Attach a cancellation flag checked between iterations.
+    pub fn with_cancel(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(flag);
+        self
+    }
+
+    fn check_cancel(&self) -> Result<(), SolverError> {
+        match &self.cancel {
+            Some(flag) if flag.load(Ordering::Relaxed) => Err(SolverError::runtime("cancelled")),
+            _ => Ok(()),
+        }
+    }
+
+    fn fixed_source_iteration(&mut self) -> Result<(), SolverError> {
         self.converged = false;
         let tol = self.config.epsilon;
         while self.iteration < self.config.max_iter {
+            self.check_cancel()?;
             if self.config.reflex_der {
                 self.update_reflective_boundaries_right();
             }
@@ -298,13 +317,15 @@ impl Runner {
                 break;
             }
         }
+        Ok(())
     }
 
-    fn inner_solve(&mut self) -> bool {
+    fn inner_solve(&mut self) -> Result<bool, SolverError> {
         self.converged = false;
         let mut inner = 0;
         let inner_tol = self.config.epsilon.max(self.config.tol_k);
         while inner < self.config.max_iter {
+            self.check_cancel()?;
             inner += 1;
             if self.config.reflex_der {
                 self.update_reflective_boundaries_right();
@@ -318,7 +339,7 @@ impl Runner {
                 break;
             }
         }
-        self.converged
+        Ok(self.converged)
     }
 
     fn fixed_k_iteration(&mut self) -> Result<(), SolverError> {
@@ -338,6 +359,7 @@ impl Runner {
         let tol = self.config.epsilon;
 
         while self.iteration < self.config.max_iter {
+            self.check_cancel()?;
             if self.config.reflex_der {
                 self.update_reflective_boundaries_right();
             }
@@ -394,13 +416,14 @@ impl Runner {
         let tol_k = self.config.tol_k;
 
         for outer in 1..=self.config.max_outer {
+            self.check_cancel()?;
             self.outer_iterations = outer;
             for k in 0..self.config.ntc {
                 self.fission_source[k] =
                     self.config.nu_sigma_f_vec[k] * self.scalar_flux[k] / k_eff;
             }
 
-            let inner_ok = self.inner_solve();
+            let inner_ok = self.inner_solve()?;
 
             let production_new = self.fission_production();
             if production_new <= 0.0 {

@@ -1,6 +1,7 @@
 //! TUI application state, input handling and rendering.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ratatui::Frame;
@@ -10,8 +11,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Cell, Clear, Paragraph, Row, Table, TableState, Tabs, Wrap};
 
+use serde_json::Value;
+
+use crate::config::Config;
 use crate::paths;
 use crate::tui::model::{ConfigModel, FieldKind, Validation};
+use crate::tui::services::{
+    config_store, results as results_service,
+    runner::{self, RunEvent, RunHandle},
+};
 
 /// Tabs shown in the title bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +93,36 @@ pub struct Edit {
     buffer: String,
 }
 
+/// State of the run screen.
+#[derive(Default)]
+pub struct RunState {
+    /// Configurations found in `outputs/inputs`.
+    pub entries: Vec<config_store::ConfigEntry>,
+    /// Selected configuration.
+    pub selected: usize,
+    /// Active background run.
+    pub handle: Option<RunHandle>,
+    /// Log lines.
+    pub log: Vec<String>,
+    /// Whether a run is in progress.
+    pub running: bool,
+    /// Output path of the last run.
+    pub output: Option<PathBuf>,
+    /// Name of the current/last run.
+    pub current: Option<String>,
+}
+
+/// State of the results screen.
+#[derive(Default)]
+pub struct ResultsState {
+    /// Output files found in `outputs/results`.
+    pub entries: Vec<results_service::OutputEntry>,
+    /// Selected output.
+    pub selected: usize,
+    /// Loaded payload.
+    pub payload: Option<Value>,
+}
+
 /// Application state.
 pub struct App {
     /// Active tab.
@@ -105,12 +143,24 @@ pub struct App {
     pub level: Level,
     /// Set to true to exit.
     pub quit: bool,
+    /// Run screen state.
+    pub run: RunState,
+    /// Results screen state.
+    pub results: ResultsState,
 }
 
 impl Default for App {
     fn default() -> Self {
         let model = ConfigModel::default();
         let validation = model.validate();
+        let run = RunState {
+            entries: config_store::list(),
+            ..RunState::default()
+        };
+        let results = ResultsState {
+            entries: results_service::list(),
+            ..ResultsState::default()
+        };
         App {
             tab: Tab::Config,
             model,
@@ -121,6 +171,8 @@ impl Default for App {
             status: "Ready. Press ? or see the footer for keys.".into(),
             level: Level::Info,
             quit: false,
+            run,
+            results,
         }
     }
 }
@@ -142,6 +194,7 @@ impl App {
                     _ => {}
                 }
             }
+            self.poll_runner();
             if self.quit {
                 break;
             }
@@ -172,16 +225,46 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('q') => self.quit = true,
-            KeyCode::Tab => self.tab = self.tab.next(),
-            KeyCode::BackTab => self.tab = self.tab.previous(),
-            KeyCode::Up => self.move_selection(-1),
-            KeyCode::Down => self.move_selection(1),
-            KeyCode::Left => self.cycle(-1),
-            KeyCode::Right => self.cycle(1),
-            KeyCode::Enter => self.activate(),
-            KeyCode::Char('s') if self.tab == Tab::Config => self.save(),
-            KeyCode::Char('v') if self.tab == Tab::Config => self.revalidate(),
+            KeyCode::Char('q') => {
+                self.quit = true;
+                return;
+            }
+            KeyCode::Tab => {
+                self.tab = self.tab.next();
+                self.on_tab_enter();
+                return;
+            }
+            KeyCode::BackTab => {
+                self.tab = self.tab.previous();
+                self.on_tab_enter();
+                return;
+            }
+            _ => {}
+        }
+
+        match self.tab {
+            Tab::Config => match key.code {
+                KeyCode::Up => self.move_selection(-1),
+                KeyCode::Down => self.move_selection(1),
+                KeyCode::Left => self.cycle(-1),
+                KeyCode::Right => self.cycle(1),
+                KeyCode::Enter => self.activate(),
+                KeyCode::Char('s') => self.save(),
+                KeyCode::Char('v') => self.revalidate(),
+                _ => {}
+            },
+            Tab::Run => match key.code {
+                KeyCode::Up => self.move_run_selection(-1),
+                KeyCode::Down => self.move_run_selection(1),
+                KeyCode::Char('r') => self.start_run(),
+                KeyCode::Char('c') => self.cancel_run(),
+                _ => {}
+            },
+            Tab::Results => match key.code {
+                KeyCode::Up => self.move_results_selection(-1),
+                KeyCode::Down => self.move_results_selection(1),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -237,6 +320,174 @@ impl App {
             Validation::Valid(_) => Level::Ok,
             _ => Level::Info,
         };
+    }
+
+    fn on_tab_enter(&mut self) {
+        match self.tab {
+            Tab::Run => self.refresh_run_entries(),
+            Tab::Results => self.refresh_results(),
+            _ => {}
+        }
+    }
+
+    /// Reload the configuration list from `outputs/inputs`.
+    pub fn refresh_run_entries(&mut self) {
+        self.run.entries = config_store::list();
+        if self.run.selected >= self.run.entries.len() {
+            self.run.selected = self.run.entries.len().saturating_sub(1);
+        }
+    }
+
+    /// Reload the output list from `outputs/results` and read the selection.
+    pub fn refresh_results(&mut self) {
+        self.results.entries = results_service::list();
+        if self.results.selected >= self.results.entries.len() {
+            self.results.selected = self.results.entries.len().saturating_sub(1);
+        }
+        self.load_selected_result();
+    }
+
+    fn load_selected_result(&mut self) {
+        let Some(entry) = self.results.entries.get(self.results.selected) else {
+            self.results.payload = None;
+            return;
+        };
+        match results_service::load(&entry.path) {
+            Ok(payload) => self.results.payload = Some(payload),
+            Err(error) => {
+                self.results.payload = None;
+                self.status = format!("Could not read {}: {error}", entry.name);
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    /// Load a result payload from an explicit path.
+    ///
+    /// # Errors
+    ///
+    /// Propagates read/parse errors.
+    pub fn load_results_from(&mut self, path: &Path) -> Result<(), String> {
+        self.results.payload = Some(results_service::load(path)?);
+        Ok(())
+    }
+
+    fn move_run_selection(&mut self, delta: i32) {
+        let count = self.run.entries.len();
+        if count == 0 {
+            return;
+        }
+        self.run.selected = (self.run.selected as i32 + delta).clamp(0, count as i32 - 1) as usize;
+    }
+
+    fn move_results_selection(&mut self, delta: i32) {
+        let count = self.results.entries.len();
+        if count == 0 {
+            return;
+        }
+        self.results.selected =
+            (self.results.selected as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        self.load_selected_result();
+    }
+
+    /// Run the selected configuration to the next auto-numbered output.
+    pub fn start_run(&mut self) {
+        self.start_run_with_output(paths::next_output_path());
+    }
+
+    /// Run the selected configuration to an explicit output path.
+    pub fn start_run_with_output(&mut self, output: PathBuf) {
+        if self.run.running {
+            self.status = "A run is already in progress.".into();
+            self.level = Level::Info;
+            return;
+        }
+        let Some(entry) = self.run.entries.get(self.run.selected).cloned() else {
+            self.status = "No configuration selected (outputs/inputs is empty).".into();
+            self.level = Level::Error;
+            return;
+        };
+        let value = match config_store::load(&entry.path) {
+            Ok(value) => value,
+            Err(error) => {
+                self.status = format!("Could not read {}: {error}", entry.name);
+                self.level = Level::Error;
+                return;
+            }
+        };
+        let config = match Config::from_value(&value, 1e-5, 2000, None) {
+            Ok(config) => config,
+            Err(error) => {
+                self.status = format!("{}: {error}", entry.name);
+                self.level = Level::Error;
+                return;
+            }
+        };
+
+        let name = entry.name.clone();
+        self.run.log.clear();
+        self.run
+            .log
+            .push(format!("config: {}", entry.path.display()));
+        self.run.current = Some(name.clone());
+        self.run.output = Some(output.clone());
+        self.run.running = true;
+        self.run.handle = Some(runner::spawn(
+            name,
+            value,
+            config,
+            None,
+            output,
+            Some(entry.path.to_string_lossy().to_string()),
+        ));
+        self.status = "Run started.".into();
+        self.level = Level::Info;
+    }
+
+    /// Request cancellation of the active run.
+    pub fn cancel_run(&mut self) {
+        if let Some(handle) = &self.run.handle {
+            handle.cancel.store(true, Ordering::Relaxed);
+            self.run.log.push("cancellation requested".into());
+            self.status = "Cancelling…".into();
+            self.level = Level::Info;
+        }
+    }
+
+    /// Drain background events. Call once per UI tick.
+    pub fn poll_runner(&mut self) {
+        let events: Vec<RunEvent> = match self.run.handle.as_ref() {
+            Some(handle) => handle.receiver.try_iter().collect(),
+            None => Vec::new(),
+        };
+        for event in events {
+            match event {
+                RunEvent::Log(line) => self.run.log.push(line),
+                RunEvent::Done { result, output } => {
+                    self.run.running = false;
+                    self.run.handle = None;
+                    self.run.log.push(format!(
+                        "done: converged={} iteration={} k_eff={:?}",
+                        result.converged, result.iteration, result.k_eff
+                    ));
+                    self.run.output = Some(output.clone());
+                    self.status = format!("Run finished: {}", output.display());
+                    self.level = Level::Ok;
+                    self.refresh_results();
+                }
+                RunEvent::Failed(error) => {
+                    self.run.running = false;
+                    self.run.handle = None;
+                    self.run.log.push(format!("error: {error}"));
+                    self.status = format!("Run failed: {error}");
+                    self.level = Level::Error;
+                }
+            }
+        }
+        if self.run.log.len() > 500 {
+            let excess = self.run.log.len() - 500;
+            self.run.log.drain(0..excess);
+        }
     }
 
     fn apply_edit(&mut self, edit: Edit) {
@@ -319,6 +570,8 @@ impl App {
         self.render_tabs(frame, chunks[1]);
         match self.tab {
             Tab::Config => self.render_config(frame, chunks[2]),
+            Tab::Run => self.render_run(frame, chunks[2]),
+            Tab::Results => self.render_results(frame, chunks[2]),
             tab => render_placeholder_tab(frame, chunks[2], tab),
         }
         self.render_footer(frame, chunks[3]);
@@ -455,11 +708,186 @@ impl App {
         frame.render_widget(help, chunks[2]);
     }
 
+    fn render_run(&self, frame: &mut Frame, area: Rect) {
+        let columns = Layout::horizontal([Constraint::Percentage(36), Constraint::Percentage(64)])
+            .split(area);
+
+        let offset = self.run.selected.saturating_sub(8) as u16;
+        let lines: Vec<Line> = self
+            .run
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let selected = index == self.run.selected;
+                let style = if selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(
+                    format!("{} {}", if selected { "▶" } else { " " }, entry.name),
+                    style,
+                ))
+            })
+            .collect();
+        let list = Paragraph::new(lines)
+            .block(Block::bordered().title(format!("Configs ({})", self.run.entries.len())))
+            .scroll((offset, 0));
+        frame.render_widget(list, columns[0]);
+
+        let chunks =
+            Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(columns[1]);
+        let state = if self.run.running { "running" } else { "idle" };
+        let header = Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(" {state} "),
+                Style::default().fg(if self.run.running {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                }),
+            ),
+            Span::raw(self.run.current.clone().unwrap_or_default()),
+            Span::styled(
+                self.run
+                    .output
+                    .as_ref()
+                    .map(|path| format!("  → {}", path.display()))
+                    .unwrap_or_default(),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+        .block(Block::bordered().title("Run"));
+        frame.render_widget(header, chunks[0]);
+
+        let start = self.run.log.len().saturating_sub(30);
+        let log_lines: Vec<Line> = self.run.log[start..]
+            .iter()
+            .map(|line| Line::from(line.clone()))
+            .collect();
+        let log = Paragraph::new(log_lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title("Log"));
+        frame.render_widget(log, chunks[1]);
+    }
+
+    fn render_results(&self, frame: &mut Frame, area: Rect) {
+        let sections = Layout::vertical([Constraint::Length(6), Constraint::Min(0)]).split(area);
+
+        let offset = self.results.selected.saturating_sub(8) as u16;
+        let lines: Vec<Line> = self
+            .results
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let selected = index == self.results.selected;
+                let style = if selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(
+                    format!(
+                        "{} {} ({} run(s))",
+                        if selected { "▶" } else { " " },
+                        entry.name,
+                        entry.total
+                    ),
+                    style,
+                ))
+            })
+            .collect();
+        let list = Paragraph::new(lines)
+            .block(Block::bordered().title(format!("Outputs ({})", self.results.entries.len())))
+            .scroll((offset, 0));
+        frame.render_widget(list, sections[0]);
+
+        match &self.results.payload {
+            Some(payload) => {
+                let rows = payload
+                    .get("runs")
+                    .and_then(Value::as_array)
+                    .map(|runs| {
+                        runs.iter()
+                            .map(|run| {
+                                Row::new(vec![
+                                    Cell::from(
+                                        run.get("config_name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("?"),
+                                    ),
+                                    Cell::from(
+                                        run.get("mode").and_then(Value::as_str).unwrap_or("-"),
+                                    ),
+                                    Cell::from(
+                                        run.get("spatial_scheme")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("-"),
+                                    ),
+                                    Cell::from(format!(
+                                        "{}",
+                                        run.get("converged")
+                                            .and_then(Value::as_bool)
+                                            .unwrap_or(false)
+                                    )),
+                                    Cell::from(
+                                        run.get("iteration")
+                                            .and_then(Value::as_u64)
+                                            .map(|value| value.to_string())
+                                            .unwrap_or_else(|| "-".into()),
+                                    ),
+                                    Cell::from(format_number(run.get("k_eff"))),
+                                    Cell::from(format_number(run.get("k_balance"))),
+                                ])
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let table = Table::new(
+                    rows,
+                    [
+                        Constraint::Length(22),
+                        Constraint::Length(14),
+                        Constraint::Length(8),
+                        Constraint::Length(9),
+                        Constraint::Length(7),
+                        Constraint::Length(12),
+                        Constraint::Length(12),
+                    ],
+                )
+                .header(Row::new(vec![
+                    "Config",
+                    "Mode",
+                    "Scheme",
+                    "Conv",
+                    "Iter",
+                    "k_eff",
+                    "k_balance",
+                ]))
+                .block(Block::bordered().title("Runs"));
+                frame.render_widget(table, sections[1]);
+            }
+            None => {
+                let message =
+                    Paragraph::new("No output selected.").block(Block::bordered().title("Runs"));
+                frame.render_widget(message, sections[1]);
+            }
+        }
+    }
+
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let help = match self.tab {
             Tab::Config => {
                 "↑/↓ move   ←/→ cycle   Enter edit/toggle   s save   v validate   Tab switch   q quit"
             }
+            Tab::Run => "↑/↓ select   r run   c cancel   Tab switch   q quit",
+            Tab::Results => "↑/↓ select output   Tab switch   q quit",
             _ => "Tab switch   q quit",
         };
         let level_style = match self.level {
@@ -520,6 +948,12 @@ fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
         ])
         .split(horizontal[1]);
     vertical[1]
+}
+
+fn format_number(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_f64)
+        .map_or_else(|| "-".to_string(), |number| format!("{number:.6}"))
 }
 
 fn geometry_bar(model: &ConfigModel) -> String {

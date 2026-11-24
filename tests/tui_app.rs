@@ -134,12 +134,22 @@ fn placeholders_are_reported_as_a_template() {
 }
 
 #[test]
-fn tabs_switch_and_show_the_planned_screen() {
+fn tabs_switch_and_render_their_screens() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
     assert_eq!(app.tab, Tab::Run);
     let text = render(&mut app, 100, 30);
-    assert!(text.contains("Run screen"));
+    assert!(text.contains("Configs ("));
+    assert!(text.contains("Log"));
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.tab, Tab::Results);
+    let text = render(&mut app, 100, 30);
+    assert!(text.contains("Outputs ("));
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.tab, Tab::Plots);
+    let text = render(&mut app, 100, 30);
     assert!(text.contains("next phase"));
 }
 
