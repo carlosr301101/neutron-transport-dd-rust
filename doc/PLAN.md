@@ -70,8 +70,8 @@ posteriores:
 | `nts status` | `nts-rs status` | hecho (1D; 2D en 4) |
 | `nts validate` | `nts-rs validate` | hecho |
 | `nts generate` (2D `input.txt`) | `nts-rs generate` | paso 4 |
-| `nts-generate` / `nts generate --place-holder` | `nts-rs expand` | paso 2 |
-| `nts-1d-config` | `nts-rs config` | paso 2 |
+| `nts-generate` / `nts generate --place-holder` | `nts-rs expand` | hecho |
+| `nts-1d-config` | `nts-rs config` | hecho |
 | `nts run` (binarios 2D) | `nts-rs run2d` | paso 4 |
 | `nts run-1d` / `nts-1d-run*` | `nts-rs run` | hecho |
 | `nts-1d-data` | `nts-rs data` | paso 3 |
@@ -229,33 +229,29 @@ nts-rs [-v|-q] [--log-level LEVEL] <COMMAND>
 
 ---
 
-## Paso 2 — Placeholders, sweeps y generador de configs
+## Paso 2 — Placeholders, sweeps y generador de configs (completado)
 
 **Objetivo:** reproducir `nts-1d-config` y `nts-generate` (expansión de
 parámetros) sin Python.
 
 **Prerrequisitos:** paso 1.
 
-### Módulos
+### Módulos implementados
 
 ```text
 src/
-  placeholder.rs   # detección, reemplazo, grillas y redondeo
-  raw_config.rs    # NumOrName: número o nombre simbólico
-  cli/config.rs    # wizard con placeholders
-  cli/expand.rs    # expansión a lista JSON
+  placeholder.rs   # detección, reemplazo, grillas, redondeo y decimales
+  wizard.rs        # build_value() devuelve el JSON crudo; con placeholders
+  cli/config.rs    # wizard con placeholders -> config_1d_###.json
+  cli/expand.rs    # expansión a lista JSON validada
+  paths.rs         # next_input_path()
 ```
 
-### Modelo `RawConfig`
+No se necesitó un `RawConfig`/`NumOrName`: el template se mantiene como
+`serde_json::Value`, de modo que los nombres conviven con números sin tipar
+artificialmente. El wizard produce ese `Value` y `expand` lo sustituye.
 
-Un campo numérico puede ser número o nombre (`kk`, `mm`, `tt`). Se representa
-con:
-
-```rust
-enum NumOrName { Number(f64), Name(String) }
-```
-
-Reglas heredadas de `core/placeholders.py`:
+### Reglas heredadas de `core/placeholders.py`
 
 - Un placeholder es un identificador `[A-Za-z_][A-Za-z0-9_]*`.
 - Se ignoran los campos de texto/enum: `SPATIAL_SCHEME`, `MODE`, `ZONE_NAMES`.
@@ -263,31 +259,39 @@ Reglas heredadas de `core/placeholders.py`:
 - `replace_placeholders` sustituye solo los nombres conocidos y respeta los
   campos de texto.
 - `build_values(start, end, step)`: grilla inclusiva; el último punto se
-  recorta a `end` si se pasa por épsilon; `step ≤ 0` y `end < start` → error.
+  recorta a `end` si el error de coma flotante lo pasa por menos de `1e-12`;
+  `step <= 0` y `end < start` → error.
 - Redondeo: se redondean **solo** los valores inyectados, a los decimales del
-  `STEP` de mayor precisión entre todos los placeholders.
+  `STEP` de mayor precisión entre todos los placeholders (`decimal_places`
+  respeta notación exponencial).
 - Semántica de combinación: **zip**, no producto cartesiano. Se usa la longitud
-  mínima y se avisa si las longitudes difieren (igual que Python).
+  mínima y se avisa si las longitudes difieren.
+- Los enteros (`IZL`, `N`, `MAX_OUTER`) y los parámetros de ejecución
+  (`TOL_K`, `K_EFF`, `POWER_KW`, `E_F_MEV`, `AREA_CM2`, `NU`, `K0`) no aceptan
+  placeholders, igual que en Python.
 
 ### Comandos
 
 ```text
-nts-rs config [-o outputs/inputs/config_1d_###.json]
-nts-rs expand --json config_1d_001.json \
-              --place-holder kk 0.1 0.95 0.05 \
-              [--place-holder mm 10 20 1] \
+nts-rs config [-o PATH]
+nts-rs expand --json TEMPLATE \
+              --place-holder NAME START END STEP \
+              [--place-holder ...] \
               [-o outputs/inputs/inputs_1d.json]
 ```
 
-- **`config`**: mismo wizard que `--manual`, pero los campos físicos aceptan
-  placeholders. Al guardar imprime el comando de expansión sugerido.
-  Nombre por defecto: `outputs/inputs/config_1d_###.json` (siguiente libre).
-- **`expand`**: lee un objeto o lista JSON, detecta placeholders, expande,
-  valida **cada** configuración expandida (con `Config::from_value`) y escribe
-  una lista JSON. Las configs inválidas se omiten con mensaje y exit 1 si hubo
-  omisiones. Nombres de salida: `json_config_001`, …
-- La salida `.py` de Python (`inputs.py`) no se genera; el reemplazo es JSON.
-  Documentar en `--help`.
+- **`config`**: wizard con placeholders en NC, HR, SCT, SCS, `NU_SIGF`,
+  `SIGMA_F`, Q y fronteras. Muestra el JSON, pide confirmación
+  (`Save configuration?`) y escribe
+  `outputs/inputs/config_1d_###.json` (siguiente libre). Imprime
+  `Placeholders detected: ...` y el comando de expansión, o `Run: ...` si no
+  hay placeholders. Rechaza salida `.py`.
+- **`expand`**: lee un objeto o lista JSON, expande con zip, valida cada
+  configuración con `Config::from_value`, escribe una lista JSON y devuelve
+  exit 1 si alguna se omitió. Sin resultados no escribe archivo. Rechaza
+  salida `.py`.
+- Salida por defecto: `outputs/inputs/inputs_1d.json`.
+- Los configs 2D se reportan como pendientes del paso 4.
 
 ### Formatos
 
@@ -301,7 +305,7 @@ Config con placeholders:
 }
 ```
 
-Salida de `expand`:
+Salida de `expand` (lista):
 
 ```json
 [
@@ -310,26 +314,30 @@ Salida de `expand`:
 ]
 ```
 
-### Tests (`tests/placeholders.rs`)
+### Tests (18 nuevos, 140 totales)
 
-Referencias: `tests/test_generate_1d_config.py` y
-`tests/test_generate_placeholder_json.py` de Python.
+Unitarios en `placeholder.rs` (8): identificadores, claves enum, reemplazo,
+placeholders sin resolver, grilla inclusiva/recortada, decimales, redondeo.
 
-- detección en valores, listas y objetos; exclusión de `MODE`/`SPATIAL_SCHEME`.
-- grilla inclusiva, recorte del último punto, `step` inválido.
-- redondeo por decimales del paso (`0.1` → 1 decimal; `1` → 0).
-- combinación zip y aviso por longitudes distintas.
-- `expand` produce una lista válida, con nombres y orden esperados.
-- placeholder sin expandir → config omitida con error.
-- config inválida → omitida, exit 1, resto de la lista intacta.
-- `config` escribe en `outputs/inputs/` y sugiere el comando correcto.
-- round-trip: `expand` → `run --json` funciona.
+`tests/config_cli.rs` (8): config concreta + `validate`, placeholders
+`kk`/`mm`, geometría `cc`/`hh`, numeración automática, valor inválido sin
+archivo, cancelar guardado, `-o` explícito, `.py` rechazado.
 
-### Criterios de aceptación
+`tests/expand_cli.rs` (10): grilla de referencia
+(`SCS = [0.1, 0.3, 0.5]`, `NU_SIGF = [0.05, 0.1, 0.15]`, `TOL_K`/`MODE`
+preservados), geometría, lista de templates, placeholder faltante sin salida,
+longitudes distintas (zip + warning), configs inválidas omitidas con exit 1,
+salida por defecto, `.py`/sin placeholders rechazados, `STEP = 0` reportado,
+lista expandida ejecutada de punta a punta.
 
-- Una config con `kk`/`mm` se expande y corre de punta a punta.
-- Los valores expandidos coinciden con la grilla/redondeo de Python.
-- `NTS_HOME` respetado en todas las rutas.
+### Criterios de aceptación (verificados)
+
+- [x] Una config con `kk`/`mm` se expande y corre de punta a punta.
+- [x] Grilla y redondeo coinciden con la referencia de Python.
+- [x] `NTS_HOME` respetado en `config` y `expand`.
+- [x] `validate` acepta el JSON generado por `config`.
+- [x] Sin placeholders → error; configs inválidas → skip + exit 1.
+- [x] Suite total: 140 tests, `clippy`, `fmt` y `cargo doc` limpios.
 
 ### Esfuerzo: M.
 
@@ -671,7 +679,7 @@ nts-rs dataset --json base.json \
 |------|------------|----------|------------------|
 | 0 | — | L (hecho) | paridad numérica |
 | 1 | 0 | S/M (hecho) | logging sin ensuciar el core |
-| 2 | 1 | M | semántica zip/redondeo |
+| 2 | 1 | M (hecho) | semántica zip/redondeo |
 | 3 | 0, 1 | M/L | plots sin display, Excel |
 | 4 | 1 | M/L | binarios externos, paralelismo |
 | 5 | 0–3 | L | alcance de la TUI |

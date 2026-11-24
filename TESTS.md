@@ -1,8 +1,9 @@
 # Test suite - Neutron Transport DD
 
-113 tests (35 unit, 77 integration, 1 doc-test) covering configuration,
+140 tests (44 unit, 95 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
-wizard, the CLI inspection commands, logging and the output format.
+wizard, the CLI inspection commands, logging, placeholder expansion and the
+output format.
 
 Run everything with:
 
@@ -28,6 +29,7 @@ cargo fmt --all -- --check
 | `config` | vectorised base config, scalar boundary expansion, bad length, comment keys, integer booleans, odd quadrature, fission inference/validation, `as_dict` round-trip, forced scheme |
 | `power` | fission integral factor 2, zero-production normalization error |
 | `paths` | zero-padded output name |
+| `placeholder` | identifier detection, enum-key skipping, replacement, unresolved checks, inclusive/clipped grids, decimal places, rounding |
 | `logging` | run-name sanitisation |
 | `cli` | object/list splitting, 2D detection, verbosity resolution |
 | doc-test | README-style eigenvalue example |
@@ -113,6 +115,31 @@ numeric fields, JSON-serializable summary.
 - `-q` suppresses progress, `-v` prints it; `--log-level` accepted.
 - `run --manual` through stdin with global flags.
 - unsupported JSON shapes rejected.
+
+### `config_cli.rs` - `nts-rs config`
+
+- concrete eigenvalue config saved and accepted by `validate`,
+- `kk`/`mm` placeholders preserved as strings plus expansion hint,
+- geometry placeholders (`cc`/`hh`),
+- auto-numbered `config_1d_001.json` / `_002`,
+- invalid numeric value fails without writing,
+- declining the save writes nothing,
+- explicit `-o` path,
+- `.py` output rejected.
+
+### `expand_cli.rs` - `nts-rs expand`
+
+- reference grid: `SCS = [0.1, 0.3, 0.5]`, `NU_SIGF = [0.05, 0.1, 0.15]`,
+  `TOL_K` and `MODE` preserved,
+- geometry placeholders become numbers,
+- a list of templates expands for every step,
+- missing placeholder -> exit 1 and no output file,
+- different range lengths use zip semantics and warn,
+- invalid expanded configs are skipped while valid ones are written (exit 1),
+- default output `outputs/inputs/inputs_1d.json`,
+- `.py` output and missing placeholders rejected,
+- invalid step (`0`) reported,
+- expanded list runs end to end.
 
 ### `output_json.rs` - end-to-end CLI
 

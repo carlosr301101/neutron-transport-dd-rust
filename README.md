@@ -6,10 +6,11 @@ It solves the one-dimensional transport equation with Diamond Difference,
 Step and Step Characteristic spatial schemes, including reflective boundaries
 and multiplicative media (fission, `k_eff`, power iteration).
 
-This repository is in **step 0** of the rewrite: the solver core, the
-configuration layer, the runner and a minimal `nts-rs run` CLI. The remaining
-Python commands (`nts-generate`, `nts-1d-config`, plots, Excel, TUI, 2D
-workflow) are ported in later steps.
+This repository implements **steps 0–2** of the rewrite: the solver core, the
+configuration layer, the runner, the `run`/`validate`/`list`/`show`/`status`
+commands, logging, and the configuration generator with placeholder sweeps
+(`config`, `expand`). Post-processing, the 2D workflow, the TUI and the PINN
+integration are ported in later steps.
 
 ## Features
 
@@ -23,6 +24,8 @@ workflow) are ported in later steps.
   `nts-1d-excel` keep working.
 - **Inspection commands**: `validate`, `list`, `show` and `status`, all with
   `--json`.
+- **Parameter sweeps**: `config` writes a template with `kk`/`mm`
+  placeholders; `expand` turns ranges into a list of validated configs.
 - **Structured logging**: daily global log plus one log per run.
 - **Interactive wizard** (`--manual`) with the same question order and
   defaults as the Python CLI.
@@ -95,6 +98,33 @@ nts-rs status                                         # dirs, counts, 2D solvers
   run; `--json` dumps the raw payload.
 - `status` never fails because of missing 2D binaries: it warns. It exits `1`
   only on real I/O errors.
+
+### Configuration generator and sweeps
+
+```bash
+# Interactive template; numeric fields accept kk/mm placeholders
+nts-rs config                         # -> outputs/inputs/config_1d_001.json
+
+# Expand ranges (one value per step, zipped across placeholders)
+nts-rs expand --json outputs/inputs/config_1d_001.json \
+    --place-holder kk 0.1 0.5 0.2 \
+    --place-holder mm 0.05 0.15 0.05 \
+    -o outputs/inputs/inputs_1d.json
+
+nts-rs run --json outputs/inputs/inputs_1d.json
+```
+
+- A placeholder is an identifier (`[A-Za-z_][A-Za-z0-9_]*`); `MODE`,
+  `SPATIAL_SCHEME` and `ZONE_NAMES` are never treated as placeholders.
+- Ranges are inclusive and the last point is clipped to `END` when
+  floating-point error pushes it slightly past it.
+- Values are rounded to the decimal places of the `STEP`; rounding applies only
+  to the injected values (so `TOL_K = 1e-6` survives).
+- Different range lengths use the shortest one (zip semantics) and print a
+  warning.
+- Every expanded configuration is validated; invalid steps are skipped and the
+  command exits `1`. The output is always a JSON list.
+- Python module output (`.py`) is not supported; use JSON.
 
 ### Logging
 
@@ -221,8 +251,9 @@ src/
   result.rs       RunResult and output payload
   paths.rs        NTS_HOME / outputs/results / auto-numbering
   wizard.rs       Interactive --manual configuration
+  placeholder.rs  Detection, replacement, grids and rounding
   logging.rs      fern console + daily file + per-run logs
-  cli/            run, validate, list, show, status
+  cli/            run, config, expand, validate, list, show, status
   main.rs         Entry point (delegates to cli::main)
 tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
 ```
@@ -230,7 +261,7 @@ tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
 ## Testing
 
 ```bash
-cargo test          # 113 tests
+cargo test          # 140 tests
 cargo clippy --all-targets --all-features
 cargo fmt --all -- --check
 ```
@@ -241,13 +272,12 @@ See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
 The full rewrite plan lives in [doc/PLAN.md](doc/PLAN.md).
 
-1. `nts-generate` placeholders (`kk`/`mm`) and `nts-1d-config`.
-2. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
-3. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
-4. TUI and PINN integration.
+1. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
+2. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
+3. TUI and PINN integration.
 
 Python `.py` configuration modules (`-c inputs.py`) are not supported; use JSON
-until the generator step lands.
+with `config`/`expand`.
 
 ## Physics references
 
