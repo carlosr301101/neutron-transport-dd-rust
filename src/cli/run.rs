@@ -1,12 +1,11 @@
 //! `nts-rs run`: execute one or more 1D configurations.
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use clap::Args;
 use serde_json::Value;
 
-use crate::cli::split_configs;
+use crate::cli::{confirm, split_configs};
 use crate::config::Config;
 use crate::core::Runner;
 use crate::logging::RunLog;
@@ -56,7 +55,7 @@ pub(crate) fn execute(args: RunCommand, verbose: bool) -> Result<u8, String> {
         let config = wizard::run_interactive(args.scheme, args.epsilon, args.max_iter)
             .map_err(|error| error.to_string())?;
         print_summary(&config);
-        if !confirm("Run? (y/n) [y]: ")? {
+        if !confirm("Run? (y/n) [y]: ", true)? {
             println!("Cancelled.");
             return Ok(0);
         }
@@ -197,23 +196,6 @@ fn run_one(
             runs.push(result::error_record(name, &error.to_string()));
         }
     }
-}
-
-fn confirm(prompt: &str) -> Result<bool, String> {
-    print!("{prompt}");
-    std::io::stdout()
-        .flush()
-        .map_err(|error| error.to_string())?;
-
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())?;
-    let answer = line.trim().to_lowercase();
-    if answer.is_empty() {
-        return Ok(true);
-    }
-    Ok(!matches!(answer.as_str(), "n" | "no"))
 }
 
 fn print_summary(config: &Config) {

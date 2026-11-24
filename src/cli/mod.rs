@@ -3,6 +3,8 @@
 //! Global options (`-v`, `-q`, `--log-level`) are handled here; each
 //! subcommand lives in its own module and returns an exit code.
 
+pub mod config;
+pub mod expand;
 pub mod list;
 pub mod run;
 pub mod show;
@@ -109,6 +111,10 @@ pub struct Cli {
 pub enum Command {
     /// Run one configuration, a JSON list, or the interactive wizard.
     Run(run::RunCommand),
+    /// Generate a configuration JSON, optionally with placeholders.
+    Config(config::ConfigCommand),
+    /// Expand placeholders into a list of configurations.
+    Expand(expand::ExpandCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -132,6 +138,8 @@ pub fn main() -> ExitCode {
     let verbose = cli.global.is_verbose();
     let outcome = match cli.command {
         Command::Run(command) => run::execute(command, verbose),
+        Command::Config(command) => config::execute(command),
+        Command::Expand(command) => expand::execute(command),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),
@@ -169,6 +177,40 @@ pub(crate) fn is_two_d_config(value: &Value) -> bool {
     ["NZ", "zones", "NR_X", "XDOM", "ZMAP", "QMAP", "BC", "TOL"]
         .iter()
         .any(|key| object.contains_key(*key))
+}
+
+/// Ask a yes/no question on `stdin`; an empty answer yields `default_yes`.
+pub(crate) fn confirm(prompt: &str, default_yes: bool) -> Result<bool, String> {
+    use std::io::Write;
+
+    print!("{prompt}");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| error.to_string())?;
+
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())?;
+    let answer = line.trim().to_lowercase();
+    if answer.is_empty() {
+        return Ok(default_yes);
+    }
+    Ok(!matches!(answer.as_str(), "n" | "no"))
+}
+
+/// Write pretty JSON, creating parent directories.
+pub(crate) fn write_json(path: &std::path::Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    let mut text = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
+    text.push('\n');
+    std::fs::write(path, text)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
 #[cfg(test)]
