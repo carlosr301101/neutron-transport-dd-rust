@@ -1,10 +1,10 @@
 # Test suite - Neutron Transport DD
 
-212 tests (62 unit, 149 integration, 1 doc-test) covering configuration,
+227 tests (66 unit, 160 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
-post-processing (data, normalize, Excel, plots), cancellation, the TUI and the
-output format.
+post-processing (data, normalize, Excel, plots), cancellation, the TUI (config
+form, mouse, accordion, dropdowns, plots/export) and the output format.
 
 Run everything with:
 
@@ -37,7 +37,7 @@ cargo fmt --all -- --check
 | `post::normalize` | scaling of scalar/angular fluxes, missing fission data |
 | `sweep` | reference grid, invalid ranges, unresolved placeholder |
 | `tui::model` | form conversion/validation, placeholders, resizing, quadrature, invalid values |
-| `tui::app` | tab cycling, geometry bar |
+| `tui::app` | tab cycling, geometry bar, row collapsing/grouping, default selection, dropdown targets |
 | `cli` | object/list splitting, 2D detection, verbosity resolution |
 | doc-test | README-style eigenvalue example |
 
@@ -223,6 +223,16 @@ numeric fields, JSON-serializable summary.
 - app runs a config to an explicit output and loads it,
 - results screen renders a payload,
 - starting without configs reports an error.
+
+### `tui_mouse.rs` - mouse, accordion and dropdowns
+
+- tab clicks, section and zone header clicks,
+- row selection and double-click editor,
+- scheme dropdown (click) and mode dropdown (keyboard),
+- `z`/`Z` collapse-all shortcuts,
+- wheel over the form and the run log,
+- `m` toggles mouse capture,
+- plot-kind button click.
 
 ### `tui_export.rs` - placeholders, plots and export (phase C)
 

@@ -640,6 +640,15 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
 - [x] `cargo clippy --all-targets` limpio y `--features images` compila.
 - [x] Suite total: 212 tests.
 
+### Iteración 2 — jerarquía y ratón
+
+- Acordeón por sección y por zona (`z`/`Z`, clic en cabeceras).
+- Dropdowns para `IZL`, `N`, esquema y modo (teclado o clic).
+- Clics en pestañas, filas, cabeceras, listas, tabla, botones y popups.
+- Rueda para formulario, listas, log y tablas.
+- Captura de ratón con `m` para poder copiar texto.
+- 11 tests nuevos en `tests/tui_mouse.rs` (227 totales).
+
 ### Esfuerzo: L.
 
 ---

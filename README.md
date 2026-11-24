@@ -187,7 +187,7 @@ least 80×24; the terminal is restored on exit and on panic.
 
 | Screen | What it does | Keys |
 |--------|--------------|------|
-| **Config** | Editable form: regions, zones, materials, boundaries, physics and power. Placeholders (`kk`, `mm`) are accepted in numeric fields. | `↑/↓` move, `←/→` cycle, `Enter` edit/toggle, `s` save, `v` validate |
+| **Config** | Editable form with collapsible sections and per-zone groups: regions, materials, boundaries, physics and power. Placeholders (`kk`, `mm`) are accepted in numeric fields. `IZL`, `N`, scheme and mode open a dropdown. | `↑/↓` move, `←/→` fold/cycle, `Enter` open/toggle, `e` edit as text, `z`/`Z` collapse all, `s` save, `v` validate |
 | **Run** | Lists `outputs/inputs`, runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
 | **Results** | Output list and a runs table (`mode`, scheme, convergence, iterations, `k_eff`, `k_balance`). | `↑/↓` select |
 | **Placeholders** | Range editor (`name`, `start`, `end`, `step`) and expansion over the selected config. | `a` add, `d` delete, `←/→` column, `Enter` edit, `x` expand |
@@ -197,6 +197,21 @@ least 80×24; the terminal is restored on exit and on panic.
 Configuration, expansion, plotting, Excel and `datos.json` use the same library
 code as the CLI, so the outputs are identical. Cancellation is checked inside
 the solver between iterations.
+
+### Mouse
+
+Mouse capture is enabled by default and can be toggled with `m` (needed to
+select/copy text with the terminal mouse). Left click acts on the matching
+widget:
+
+- tabs switch the screen,
+- section and zone headers collapse/expand,
+- form rows select; a second click opens the editor (or the dropdown for
+  `IZL`, `N`, scheme and mode),
+- lists and the runs table select; buttons run, generate and export,
+- the wheel scrolls the form, lists, log and tables.
+
+Every button also has a keyboard shortcut, so the TUI works without a mouse.
 
 Optional inline plot preview (sixel/kitty/halfblocks):
 
