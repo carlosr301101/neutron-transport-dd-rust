@@ -3,6 +3,7 @@
 //! Global options (`-v`, `-q`, `--log-level`) are handled here; each
 //! subcommand lives in its own module and returns an exit code.
 
+pub mod list;
 pub mod run;
 pub mod validate;
 
@@ -108,6 +109,8 @@ pub enum Command {
     Run(run::RunCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
+    /// List generated inputs or results.
+    List(list::ListCommand),
 }
 
 /// Entry point used by `src/main.rs`.
@@ -124,6 +127,7 @@ pub fn main() -> ExitCode {
     let outcome = match cli.command {
         Command::Run(command) => run::execute(command, verbose),
         Command::Validate(command) => validate::execute(command),
+        Command::List(command) => list::execute(command),
     };
 
     match outcome {

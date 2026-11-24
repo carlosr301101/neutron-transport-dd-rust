@@ -81,7 +81,10 @@ fn collect_outputs() -> Result<Vec<Entry>, String> {
     let mut entries = read_directory(&directory)?
         .into_iter()
         .filter(|path| {
-            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
             name.starts_with("output_") && name.ends_with(".json")
         })
         .map(|path| {
@@ -98,10 +101,7 @@ fn read_directory(directory: &Path) -> Result<Vec<PathBuf>, String> {
         Ok(read) => read,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
-            return Err(format!(
-                "failed to read {}: {error}",
-                directory.display()
-            ));
+            return Err(format!("failed to read {}: {error}", directory.display()));
         }
     };
 
@@ -160,13 +160,11 @@ fn entry_json(entry: &Entry) -> Value {
         "size": entry.size,
         "modified": entry.modified.map(|stamp| stamp.format("%Y-%m-%d %H:%M:%S").to_string()),
     });
-    if let Some(summary) = &entry.summary {
-        if let Some(map) = object.as_object_mut() {
-            if let Some(summary) = summary.as_object() {
-                for (key, value) in summary {
-                    map.insert(key.clone(), value.clone());
-                }
-            }
+    if let (Some(summary), Some(map)) = (&entry.summary, object.as_object_mut())
+        && let Some(fields) = summary.as_object()
+    {
+        for (key, value) in fields {
+            map.insert(key.clone(), value.clone());
         }
     }
     object
