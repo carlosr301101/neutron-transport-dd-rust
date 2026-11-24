@@ -150,7 +150,17 @@ fn tabs_switch_and_render_their_screens() {
     press(&mut app, KeyCode::Tab);
     assert_eq!(app.tab, Tab::Plots);
     let text = render(&mut app, 100, 30);
-    assert!(text.contains("next phase"));
+    assert!(text.contains("kind:"));
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.tab, Tab::Placeholders);
+    let text = render(&mut app, 100, 30);
+    assert!(text.contains("Placeholders"));
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.tab, Tab::Export);
+    let text = render(&mut app, 100, 30);
+    assert!(text.contains("datos.json"));
 }
 
 #[test]

@@ -163,7 +163,7 @@ fn resolve(path: &Path) -> PathBuf {
     }
 }
 
-fn open_file(path: &Path) {
+pub(crate) fn open_file(path: &Path) {
     use std::process::{Command, Stdio};
 
     let spawned = if cfg!(target_os = "macos") {

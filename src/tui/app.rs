@@ -15,6 +15,8 @@ use serde_json::Value;
 
 use crate::config::Config;
 use crate::paths;
+use crate::post::{excel, extract, plot as plot_post};
+use crate::sweep::{self, SweepRange};
 use crate::tui::model::{ConfigModel, FieldKind, Validation};
 use crate::tui::services::{
     config_store, results as results_service,
@@ -85,13 +87,59 @@ pub enum Level {
     Error,
 }
 
+/// Target of an in-progress edit.
+#[derive(Debug, Clone, Copy)]
+enum EditTarget {
+    Field(FieldKind),
+    Sweep { row: usize, column: usize },
+}
+
 /// In-progress cell edit.
 #[derive(Debug, Clone)]
 pub struct Edit {
-    kind: FieldKind,
+    target: EditTarget,
     label: String,
     buffer: String,
 }
+
+/// Placeholder ranges being edited.
+#[derive(Default)]
+pub struct SweepState {
+    /// Ranges.
+    pub ranges: Vec<SweepRange>,
+    /// Selected range.
+    pub selected: usize,
+    /// Selected column (0 name, 1 start, 2 end, 3 step).
+    pub column: usize,
+    /// Last expansion message.
+    pub message: String,
+}
+
+/// Plot generation state.
+#[derive(Default)]
+pub struct PlotState {
+    /// Index into `PLOT_KINDS`.
+    pub kind: usize,
+    /// Last generated file.
+    pub last: Option<PathBuf>,
+    /// Last message.
+    pub message: String,
+    /// Inline preview (feature `images`).
+    #[cfg(feature = "images")]
+    pub preview: Option<ratatui_image::protocol::StatefulProtocol>,
+}
+
+/// Export state.
+#[derive(Default)]
+pub struct ExportState {
+    /// Last message.
+    pub message: String,
+    /// Last exported file.
+    pub last: Option<PathBuf>,
+}
+
+/// Plot kinds offered by the Plots screen.
+pub const PLOT_KINDS: [&str; 4] = ["scalar", "angular", "k-history", "scs"];
 
 /// State of the run screen.
 #[derive(Default)]
@@ -147,6 +195,12 @@ pub struct App {
     pub run: RunState,
     /// Results screen state.
     pub results: ResultsState,
+    /// Placeholders screen state.
+    pub sweeps: SweepState,
+    /// Plots screen state.
+    pub plots: PlotState,
+    /// Export screen state.
+    pub export: ExportState,
 }
 
 impl Default for App {
@@ -173,6 +227,9 @@ impl Default for App {
             quit: false,
             run,
             results,
+            sweeps: SweepState::default(),
+            plots: PlotState::default(),
+            export: ExportState::default(),
         }
     }
 }
@@ -265,7 +322,35 @@ impl App {
                 KeyCode::Down => self.move_results_selection(1),
                 _ => {}
             },
-            _ => {}
+            Tab::Placeholders => match key.code {
+                KeyCode::Up => self.move_sweep_selection(-1),
+                KeyCode::Down => self.move_sweep_selection(1),
+                KeyCode::Left => self.sweeps.column = self.sweeps.column.saturating_sub(1),
+                KeyCode::Right => self.sweeps.column = (self.sweeps.column + 1).min(3),
+                KeyCode::Char('a') => self.add_sweep_range(),
+                KeyCode::Char('d') => self.remove_sweep_range(),
+                KeyCode::Enter => self.edit_sweep_cell(),
+                KeyCode::Char('x') => self.expand_placeholders(),
+                _ => {}
+            },
+            Tab::Plots => match key.code {
+                KeyCode::Char('k') | KeyCode::Right => {
+                    self.plots.kind = (self.plots.kind + 1) % PLOT_KINDS.len();
+                }
+                KeyCode::Left => {
+                    self.plots.kind = (self.plots.kind + PLOT_KINDS.len() - 1) % PLOT_KINDS.len();
+                }
+                KeyCode::Char('g') => self.generate_plot(),
+                KeyCode::Char('o') => self.open_last_plot(),
+                _ => {}
+            },
+            Tab::Export => match key.code {
+                KeyCode::Char('d') => self.export_data(),
+                KeyCode::Char('x') => self.export_excel(),
+                KeyCode::Char('s') => self.export_scs(),
+                KeyCode::Char('o') => self.open_last_export(),
+                _ => {}
+            },
         }
     }
 
@@ -490,9 +575,304 @@ impl App {
         }
     }
 
+    fn move_sweep_selection(&mut self, delta: i32) {
+        let count = self.sweeps.ranges.len();
+        if count == 0 {
+            return;
+        }
+        self.sweeps.selected =
+            (self.sweeps.selected as i32 + delta).clamp(0, count as i32 - 1) as usize;
+    }
+
+    fn add_sweep_range(&mut self) {
+        let used: Vec<&str> = self
+            .sweeps
+            .ranges
+            .iter()
+            .map(|range| range.name.as_str())
+            .collect();
+        let name = ["kk", "mm", "tt", "pp"]
+            .iter()
+            .find(|name| !used.contains(name))
+            .copied()
+            .unwrap_or("kk");
+        self.sweeps.ranges.push(SweepRange::new(name));
+        self.sweeps.selected = self.sweeps.ranges.len() - 1;
+        self.sweeps.message.clear();
+    }
+
+    fn remove_sweep_range(&mut self) {
+        if self.sweeps.ranges.is_empty() {
+            return;
+        }
+        self.sweeps.ranges.remove(self.sweeps.selected);
+        self.sweeps.selected = self
+            .sweeps
+            .selected
+            .min(self.sweeps.ranges.len().saturating_sub(1));
+    }
+
+    fn edit_sweep_cell(&mut self) {
+        if self.sweeps.ranges.is_empty() {
+            return;
+        }
+        self.start_sweep_edit(self.sweeps.selected, self.sweeps.column);
+    }
+
+    /// Expand the current ranges over the selected configuration.
+    pub fn expand_placeholders(&mut self) {
+        let output = paths::outputs_dir().join("inputs").join("inputs_1d.json");
+        self.expand_placeholders_to(output);
+    }
+
+    /// Expand the current ranges and write the list to an explicit path.
+    pub fn expand_placeholders_to(&mut self, output: PathBuf) {
+        let Some(entry) = self.run.entries.get(self.run.selected).cloned() else {
+            self.sweeps.message = "No configuration selected (outputs/inputs is empty).".into();
+            self.level = Level::Error;
+            return;
+        };
+        let value = match config_store::load(&entry.path) {
+            Ok(value) => value,
+            Err(error) => {
+                self.sweeps.message = format!("Could not read {}: {error}", entry.name);
+                self.level = Level::Error;
+                return;
+            }
+        };
+
+        match sweep::expand(&[(entry.name.clone(), value)], &self.sweeps.ranges) {
+            Ok(expansion) if expansion.configs.is_empty() => {
+                self.sweeps.message = format!(
+                    "No configurations generated ({} problem(s)).",
+                    expansion.errors.len()
+                );
+                self.level = Level::Error;
+            }
+            Ok(expansion) => {
+                let total = expansion.configs.len();
+                match crate::cli::write_json(&output, &Value::Array(expansion.configs)) {
+                    Ok(()) => {
+                        self.sweeps.message = format!(
+                            "Generated {total} config(s) in {}{}",
+                            output.display(),
+                            if expansion.errors.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ({} skipped)", expansion.errors.len())
+                            }
+                        );
+                        self.status = self.sweeps.message.clone();
+                        self.level = Level::Ok;
+                    }
+                    Err(error) => {
+                        self.sweeps.message = format!("Write failed: {error}");
+                        self.level = Level::Error;
+                    }
+                }
+            }
+            Err(error) => {
+                self.sweeps.message = format!("Expansion failed: {error}");
+                self.status = self.sweeps.message.clone();
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    fn selected_output(&self) -> Result<(Value, PathBuf), String> {
+        let entry = self
+            .results
+            .entries
+            .get(self.results.selected)
+            .ok_or_else(|| "No output selected in Results.".to_string())?;
+        let payload = results_service::load(&entry.path)?;
+        Ok((payload, entry.path.clone()))
+    }
+
+    fn build_datos_value(&self, payload: &Value, source: &Path) -> Result<Value, String> {
+        let runs = payload
+            .get("runs")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "payload has no runs[]".to_string())?;
+        let first = runs
+            .first()
+            .ok_or_else(|| "payload has no runs".to_string())?;
+        let length = first
+            .get("scalar_flux")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if length == 0 {
+            return Err("first run has no scalar_flux".to_string());
+        }
+        let positions = if length > 1 {
+            vec![0, length - 1]
+        } else {
+            vec![0]
+        };
+        let extraction = extract::extract(payload, &source.to_string_lossy(), &positions, None)?;
+        Ok(extraction.payload)
+    }
+
+    /// Generate the plot for the selected kind into the default path.
+    pub fn generate_plot(&mut self) {
+        let kind = PLOT_KINDS[self.plots.kind];
+        let output = paths::results_dir()
+            .join("plots")
+            .join(format!("{kind}.png"));
+        self.generate_kind_to(self.plots.kind, output);
+    }
+
+    /// Generate a plot into an explicit path.
+    pub fn generate_plot_to(&mut self, output: PathBuf) {
+        self.generate_kind_to(self.plots.kind, output);
+    }
+
+    fn generate_kind_to(&mut self, kind_index: usize, output: PathBuf) {
+        let kind = PLOT_KINDS[kind_index];
+        let result = (|| -> Result<(), String> {
+            let (payload, source) = self.selected_output()?;
+            let runs = payload
+                .get("runs")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "payload has no runs[]".to_string())?;
+            if runs.is_empty() {
+                return Err("payload has no runs".to_string());
+            }
+            let indices: Vec<usize> = (0..runs.len()).collect();
+            let size = plot_post::PlotSize::default();
+
+            match kind {
+                "scalar" => plot_post::scalar(&payload, &indices, &output, size, false),
+                "angular" => plot_post::angular(&payload, indices[0], &output, size, false),
+                "k-history" => plot_post::k_history(&payload, &indices, &output, size),
+                _ => {
+                    let datos = self.build_datos_value(&payload, &source)?;
+                    plot_post::scs(&datos, "SCS", &output, size)
+                }
+            }
+        })();
+
+        match result {
+            Ok(()) => {
+                self.plots.last = Some(output.clone());
+                self.plots.message = format!("Saved {}", output.display());
+                self.status = self.plots.message.clone();
+                self.level = Level::Ok;
+                #[cfg(feature = "images")]
+                {
+                    self.plots.preview = load_preview(&output);
+                }
+            }
+            Err(error) => {
+                self.plots.message = format!("Plot failed: {error}");
+                self.status = self.plots.message.clone();
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    fn open_last_plot(&mut self) {
+        if let Some(path) = &self.plots.last {
+            crate::cli::plot::open_file(path);
+        }
+    }
+
+    /// Export `datos.json` into the default results path.
+    pub fn export_data(&mut self) {
+        self.export_data_to(paths::results_dir().join("datos.json"));
+    }
+
+    /// Export `datos.json` into an explicit path.
+    pub fn export_data_to(&mut self, path: PathBuf) {
+        let result = (|| -> Result<(), String> {
+            let (payload, source) = self.selected_output()?;
+            let datos = self.build_datos_value(&payload, &source)?;
+            crate::cli::write_json(&path, &datos)
+        })();
+        self.finish_export(result, path, "Data");
+    }
+
+    /// Export the workbook next to the selected output.
+    pub fn export_excel(&mut self) {
+        match self.selected_output() {
+            Ok((_, source)) => {
+                let path = source.with_extension("xlsx");
+                self.export_excel_to(path);
+            }
+            Err(error) => {
+                self.export.message = error.clone();
+                self.status = error;
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    /// Export the workbook into an explicit path.
+    pub fn export_excel_to(&mut self, path: PathBuf) {
+        let result = (|| -> Result<(), String> {
+            let (payload, _) = self.selected_output()?;
+            let runs = payload
+                .get("runs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            excel::write_workbook(&payload, &runs, &path)
+        })();
+        self.finish_export(result, path, "Excel");
+    }
+
+    /// Export the SCS plot into the default plots directory.
+    pub fn export_scs(&mut self) {
+        self.export_scs_to(paths::results_dir().join("plots").join("scs.png"));
+    }
+
+    /// Export the SCS plot into an explicit path.
+    pub fn export_scs_to(&mut self, path: PathBuf) {
+        self.generate_kind_to(3, path);
+        self.export.message = self.plots.message.clone();
+        self.export.last = self.plots.last.clone();
+    }
+
+    fn finish_export(&mut self, result: Result<(), String>, path: PathBuf, label: &str) {
+        match result {
+            Ok(()) => {
+                self.export.message = format!("{label} saved: {}", path.display());
+                self.export.last = Some(path);
+                self.status = self.export.message.clone();
+                self.level = Level::Ok;
+            }
+            Err(error) => {
+                self.export.message = format!("{label} failed: {error}");
+                self.status = self.export.message.clone();
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    fn open_last_export(&mut self) {
+        if let Some(path) = &self.export.last {
+            crate::cli::plot::open_file(path);
+        }
+    }
+
     fn apply_edit(&mut self, edit: Edit) {
-        self.model.set_field(edit.kind, &edit.buffer);
-        self.validation = self.model.validate();
+        match edit.target {
+            EditTarget::Field(kind) => {
+                self.model.set_field(kind, &edit.buffer);
+                self.validation = self.model.validate();
+            }
+            EditTarget::Sweep { row, column } => {
+                if let Some(range) = self.sweeps.ranges.get_mut(row) {
+                    match column {
+                        0 => range.name = edit.buffer.trim().to_string(),
+                        1 => range.start = edit.buffer.trim().to_string(),
+                        2 => range.end = edit.buffer.trim().to_string(),
+                        _ => range.step = edit.buffer.trim().to_string(),
+                    }
+                }
+                self.sweeps.message.clear();
+            }
+        }
         self.status = format!("{} = {}", edit.label, edit.buffer);
         self.level = Level::Info;
     }
@@ -538,9 +918,26 @@ impl App {
 
     fn start_edit(&mut self, kind: FieldKind, label: &str, value: &str) {
         self.editing = Some(Edit {
-            kind,
+            target: EditTarget::Field(kind),
             label: label.to_string(),
             buffer: value.to_string(),
+        });
+    }
+
+    fn start_sweep_edit(&mut self, row: usize, column: usize) {
+        let Some(range) = self.sweeps.ranges.get(row) else {
+            return;
+        };
+        let (label, value) = match column {
+            0 => ("placeholder name", range.name.clone()),
+            1 => ("start", range.start.clone()),
+            2 => ("end", range.end.clone()),
+            _ => ("step", range.step.clone()),
+        };
+        self.editing = Some(Edit {
+            target: EditTarget::Sweep { row, column },
+            label: format!("range {} {label}", row + 1),
+            buffer: value,
         });
     }
 
@@ -572,7 +969,9 @@ impl App {
             Tab::Config => self.render_config(frame, chunks[2]),
             Tab::Run => self.render_run(frame, chunks[2]),
             Tab::Results => self.render_results(frame, chunks[2]),
-            tab => render_placeholder_tab(frame, chunks[2], tab),
+            Tab::Placeholders => self.render_sweeps(frame, chunks[2]),
+            Tab::Plots => self.render_plots(frame, chunks[2]),
+            Tab::Export => self.render_export(frame, chunks[2]),
         }
         self.render_footer(frame, chunks[3]);
 
@@ -881,6 +1280,149 @@ impl App {
         }
     }
 
+    fn render_sweeps(&self, frame: &mut Frame, area: Rect) {
+        let sections = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).split(area);
+        let rows = self
+            .sweeps
+            .ranges
+            .iter()
+            .enumerate()
+            .map(|(index, range)| {
+                let selected = index == self.sweeps.selected;
+                let style = if selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let cell = |column: usize, text: &str| {
+                    if selected && column == self.sweeps.column {
+                        Cell::from(Span::styled(
+                            text.to_string(),
+                            Style::default().fg(Color::Yellow),
+                        ))
+                    } else {
+                        Cell::from(text.to_string())
+                    }
+                };
+                Row::new(vec![
+                    cell(0, &range.name),
+                    cell(1, &range.start),
+                    cell(2, &range.end),
+                    cell(3, &range.step),
+                ])
+                .style(style)
+            })
+            .collect::<Vec<_>>();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(18),
+                Constraint::Length(12),
+                Constraint::Length(12),
+                Constraint::Length(12),
+            ],
+        )
+        .header(Row::new(vec!["Name", "Start", "End", "Step"]))
+        .block(Block::bordered().title("Placeholders"));
+        frame.render_widget(table, sections[0]);
+
+        let info = Paragraph::new(vec![
+            Line::from(self.sweeps.message.clone()),
+            Line::from(Span::styled(
+                format!(
+                    "base config: {}",
+                    self.run
+                        .entries
+                        .get(self.run.selected)
+                        .map_or("<none>", |entry| entry.name.as_str())
+                ),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title("Expansion"));
+        frame.render_widget(info, sections[1]);
+    }
+
+    fn render_plots(&mut self, frame: &mut Frame, area: Rect) {
+        let columns = Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)])
+            .split(area);
+        let info = Paragraph::new(vec![
+            Line::from(format!("kind: {}", PLOT_KINDS[self.plots.kind])),
+            Line::from(format!(
+                "output: {}",
+                self.results
+                    .entries
+                    .get(self.results.selected)
+                    .map_or("<none>", |entry| entry.name.as_str())
+            )),
+            Line::from(""),
+            Line::from(self.plots.message.clone()),
+            Line::from(Span::styled(
+                self.plots
+                    .last
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title("Plot"));
+        frame.render_widget(info, columns[0]);
+
+        #[cfg(feature = "images")]
+        {
+            match self.plots.preview.as_mut() {
+                Some(protocol) => {
+                    frame.render_stateful_widget(
+                        ratatui_image::StatefulImage::default(),
+                        columns[1],
+                        protocol,
+                    );
+                }
+                None => {
+                    let message =
+                        Paragraph::new("Generate a plot to preview it (feature `images`).")
+                            .block(Block::bordered().title("Preview"));
+                    frame.render_widget(message, columns[1]);
+                }
+            }
+        }
+        #[cfg(not(feature = "images"))]
+        {
+            let message = Paragraph::new(
+                "Preview disabled. Build with `--features images` for an inline preview.",
+            )
+            .block(Block::bordered().title("Preview"));
+            frame.render_widget(message, columns[1]);
+        }
+    }
+
+    fn render_export(&self, frame: &mut Frame, area: Rect) {
+        let info = Paragraph::new(vec![
+            Line::from("d  datos.json (positions 0 and last)"),
+            Line::from("x  Excel workbook next to the selected output"),
+            Line::from("s  SCS plot in outputs/results/plots"),
+            Line::from(""),
+            Line::from(format!(
+                "selected output: {}",
+                self.results
+                    .entries
+                    .get(self.results.selected)
+                    .map_or("<none>", |entry| entry.name.as_str())
+            )),
+            Line::from(""),
+            Line::from(self.export.message.clone()),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(Block::bordered().title("Export"));
+        frame.render_widget(info, area);
+    }
+
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let help = match self.tab {
             Tab::Config => {
@@ -888,7 +1430,9 @@ impl App {
             }
             Tab::Run => "↑/↓ select   r run   c cancel   Tab switch   q quit",
             Tab::Results => "↑/↓ select output   Tab switch   q quit",
-            _ => "Tab switch   q quit",
+            Tab::Placeholders => "a add   d delete   ←/→ column   Enter edit   x expand   q quit",
+            Tab::Plots => "←/→/k kind   g generate   o open   Tab switch   q quit",
+            Tab::Export => "d data   x excel   s scs plot   o open   Tab switch   q quit",
         };
         let level_style = match self.level {
             Level::Info => Style::default().fg(Color::Gray),
@@ -914,22 +1458,6 @@ impl App {
     }
 }
 
-fn render_placeholder_tab(frame: &mut Frame, area: Rect, tab: Tab) {
-    let message = Paragraph::new(format!(
-        "{} screen\n\nThis screen is implemented in the next phase.",
-        tab.title()
-    ))
-    .alignment(ratatui::layout::Alignment::Center)
-    .block(Block::bordered().title(tab.title()));
-    let rows = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(5),
-        Constraint::Fill(1),
-    ])
-    .split(area);
-    frame.render_widget(message, rows[1]);
-}
-
 fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
@@ -948,6 +1476,18 @@ fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
         ])
         .split(horizontal[1]);
     vertical[1]
+}
+
+#[cfg(feature = "images")]
+fn load_preview(path: &Path) -> Option<ratatui_image::protocol::StatefulProtocol> {
+    use std::io::IsTerminal;
+
+    if !std::io::stdout().is_terminal() {
+        return None;
+    }
+    let picker = ratatui_image::picker::Picker::from_query_stdio().ok()?;
+    let image = image::ImageReader::open(path).ok()?.decode().ok()?;
+    Some(picker.new_resize_protocol(image))
 }
 
 fn format_number(value: Option<&Value>) -> String {
