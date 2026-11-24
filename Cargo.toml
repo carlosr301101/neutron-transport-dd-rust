@@ -26,6 +26,8 @@ fern = { version = "0.7", default-features = false, features = ["date-based"] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
+rust_xlsxwriter = "0.104.0"
 
 [dev-dependencies]
+calamine = "0.38.0"
 tempfile = "3"

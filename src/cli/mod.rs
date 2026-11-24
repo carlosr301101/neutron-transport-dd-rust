@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod data;
+pub mod excel;
 pub mod expand;
 pub mod list;
 pub mod normalize;
@@ -121,6 +122,8 @@ pub enum Command {
     Data(data::DataCommand),
     /// Normalize an existing output to a target power.
     Normalize(normalize::NormalizeCommand),
+    /// Export a consolidated output as an Excel workbook.
+    Excel(excel::ExcelCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -148,6 +151,7 @@ pub fn main() -> ExitCode {
         Command::Expand(command) => expand::execute(command),
         Command::Data(command) => data::execute(command),
         Command::Normalize(command) => normalize::execute(command),
+        Command::Excel(command) => excel::execute(command),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),
