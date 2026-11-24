@@ -1,235 +1,214 @@
-# Neutron Transport with Domain Decomposition
+# Neutron Transport with Domain Decomposition (Rust)
 
-A high-performance Rust library for solving one-dimensional neutron transport problems using the Discrete Ordinates (S_N) method with domain decomposition techniques.
+A Rust port of the 1D S_N (discrete ordinates) neutron transport workflow of
+[`neutron-transport-PINNs`](https://github.com/carlosr301101/neutron-transport-PINNs).
+It solves the one-dimensional transport equation with Diamond Difference,
+Step and Step Characteristic spatial schemes, including reflective boundaries
+and multiplicative media (fission, `k_eff`, power iteration).
 
-## Overview
+This repository is in **step 0** of the rewrite: the solver core, the
+configuration layer, the runner and a minimal `nts-rs run` CLI. The remaining
+Python commands (`nts-generate`, `nts-1d-config`, plots, Excel, TUI, 2D
+workflow) are ported in later steps.
 
-This crate provides a robust solver for the linear Boltzmann equation in one spatial dimension, implementing the S_N discretization method with reflective boundary conditions. It's designed for nuclear physics simulations, reactor analysis, and neutron transport research.
+## Features
 
-### Key Features
+- **S_N sweep** with configurable quadrature (S2, S4, S6, S8).
+- **Three spatial schemes**: `DD`, `STEP`, `SC` (selectable or forced).
+- **Four physics modes**: `fixed_source`, `fixed_k`, `driven`, `eigenvalue`
+  (power iteration for `k_eff`).
+- **Power normalization** (`POWER_KW`, `E_F_MEV`, `NU` or `SIGMA_F`).
+- **Python-compatible output**: `output_1d_###.json` keeps the exact schema
+  of the reference implementation, so `nts-1d-data`, `nts-1d-plot` and
+  `nts-1d-excel` keep working.
+- **Interactive wizard** (`--manual`) with the same question order and
+  defaults as the Python CLI.
+- **No runtime data files**: quadrature data is embedded in the binary.
 
-- **Discrete Ordinates (S_N) Method**: Accurate discretization of the angular dimension
-- **Sweep Algorithm**: Efficient spatial discretization using the transport sweep method
-- **Automatic Convergence Detection**: Relative error-based convergence criteria with configurable tolerance
-- **Flexible Input**: JSON configuration files or interactive manual input mode
-- **Domain Decomposition**: Support for multiple regions with different material properties
-- **Reflective Boundaries**: Implements reflective boundary conditions for closed geometries
-- **CLI Interface**: Easy-to-use command-line tool for running simulations
-- **Comprehensive Testing**: Unit and integration tests with 32 passing test cases
-
-## Installation
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-neutron-transport-dd = "0.1"
-```
-
-## Quick Start
-
-### Using the CLI
-
-#### Automatic Mode (JSON Configuration)
+## Build
 
 ```bash
-cargo run -- --input data/input.json --epsilon 1e-5 --max-iterations 2000
+cargo build --release
 ```
 
-#### Manual Mode (Interactive Input)
+The binary is `target/release/nts-rs`.
+
+## CLI
+
+Run one configuration or a JSON list:
 
 ```bash
-cargo run
+nts-rs run --json data/example_eigenvalue.json -o outputs/results/eigen.json
+nts-rs run --json data/input.json --verbose
 ```
 
-The program will prompt you interactively for all configuration parameters.
+Run the interactive wizard:
 
-### Using as a Library
+```bash
+nts-rs run --manual
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--json FILE` | One config object or a list of objects |
+| `--manual` | Interactive step-by-step configuration |
+| `-o, --output PATH` | Output JSON (default: `outputs/results/output_1d_###.json`) |
+| `--scheme DD\|STEP\|SC` | Force the spatial scheme, ignoring `SPATIAL_SCHEME` |
+| `-e, --epsilon TOL` | Flux convergence tolerance (default `1e-5`) |
+| `-m, --max-iter N` | Maximum flux updates (default `2000`) |
+| `-v, --verbose` | Print per-run progress |
+
+The work directory is `NTS_HOME` when set, otherwise the current directory.
+Runs write `outputs/results/output_1d_###.json`, auto-numbered.
+
+Exit codes: `0` success, `1` one or more runs failed, `130` cancelled.
+
+## Library usage
 
 ```rust
-use neutron_transport_dd::algorithm::{Config, Runner};
+use neutron_transport_dd::config::Config;
+use neutron_transport_dd::core::Runner;
 
-// Load configuration from JSON
-let config = Config::new_auto(1e-5, 2000, "data/input.json")?;
+let config = Config::from_json_file(
+    "data/example_eigenvalue.json",
+    1e-5,   // epsilon
+    2000,   // max_iter
+    None,   // forced scheme
+)?;
 
-// Create solver and run
-let mut runner = Runner::new(config);
-let result = runner.run();
-
-// Access results
-println!("Converged: {}", result.converged);
-println!("Iterations: {}", result.iteration);
-println!("Computation time: {:?}", result.elapsed);
+let result = Runner::new(config)?.run()?;
+println!("k_eff = {:?}", result.k_eff);
+println!("converged = {}", result.converged);
 ```
 
 ## Configuration
 
-### JSON Input Format
-
-Create a `data/input.json` file with the following structure:
-
 ```json
 {
-  "num_regions": 3,
-  "num_zones": 3,
-  "NC": [10, 15, 10],
-  "HR": [0.5, 0.5, 0.5],
-  "IZL": [1, 2, 3],
-  "SCT": [1.0, 1.5, 1.0],
-  "SCS": [0.8, 1.2, 0.8],
-  "Q": [1.0, 0.5, 0.3],
+  "num_regions": 1,
+  "num_zones": 1,
+  "NC": [100],
+  "HR": [20.0],
+  "IZL": [1],
+  "SCT": [1.0],
+  "SCS": [0.9],
+  "NU_SIGF": [0.11],
+  "Q": [0.0],
   "N": 8,
-  "reflex_izq": 1,
-  "reflex_der": 0,
-  "bound_left": [0.1, 0.05, 0.02, 0.01],
-  "bound_right": [0.0, 0.0, 0.0, 0.0]
+  "SPATIAL_SCHEME": "DD",
+  "reflex_izq": false,
+  "reflex_der": false,
+  "bound_left": [0, 0, 0, 0],
+  "bound_right": [0, 0, 0, 0],
+  "MODE": "eigenvalue",
+  "TOL_K": 1e-6,
+  "MAX_OUTER": 200
 }
 ```
 
-### Configuration Parameters
+| Key | Type | Description |
+|-----|------|-------------|
+| `num_regions` | int | Number of spatial regions |
+| `num_zones` | int | Number of material zones (1-based) |
+| `NC` | int[] | Cells per region |
+| `HR` | float[] | Thickness per region \[cm\] |
+| `IZL` | int[] | Material zone of each region |
+| `SCT`, `SCS` | float[] | Total / scattering cross-section per zone |
+| `Q` | float[] | External isotropic source per region |
+| `N` | int | Quadrature order: 2, 4, 6 or 8 (even) |
+| `SPATIAL_SCHEME` | string | `DD` (default), `STEP` or `SC` |
+| `reflex_izq`, `reflex_der` | bool | Reflective boundaries (`0`/`1` also accepted) |
+| `bound_left`, `bound_right` | float or float[] | Incoming flux; a scalar expands to `N/2` values |
+| `NU_SIGF` | float[] | `nu * Sigma_f` per zone, default zeros |
+| `SIGMA_F` | float[]? | `Sigma_f` per zone (alternative to `NU_SIGF` for power) |
+| `MODE` | string | `fixed_source`, `fixed_k`, `driven`, `eigenvalue`; inferred when omitted |
+| `K_EFF`, `K0` | float? | Imposed / initial `k_eff` |
+| `TOL_K`, `MAX_OUTER` | float / int | Power-iteration tolerance and cap |
+| `POWER_KW`, `E_F_MEV`, `NU`, `AREA_CM2` | float? | Power normalization |
+| `ZONE_NAMES` | string[]? | Optional presentation metadata |
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `num_regions` | usize | Number of spatial regions |
-| `num_zones` | usize | Number of material zones |
-| `NC` | Vec\<usize\> | Number of cells in each region |
-| `HR` | Vec\<f64\> | Cell width (mesh spacing) in each region |
-| `IZL` | Vec\<usize\> | Material zone index for each region (1-indexed) |
-| `SCT` | Vec\<f64\> | Macroscopic total cross-section for each zone |
-| `SCS` | Vec\<f64\> | Macroscopic scattering cross-section for each zone |
-| `Q` | Vec\<f64\> | External neutron source in each region |
-| `N` | usize | Number of ordinates (must be even; ≥ 2) |
-| `reflex_izq` | i32 | 1 = reflective left boundary, 0 = vacuum |
-| `reflex_der` | i32 | 1 = reflective right boundary, 0 = vacuum |
-| `bound_left` | Vec\<f64\> | Incident flux at left boundary (N/2 values, only if reflex_izq=0) |
-| `bound_right` | Vec\<f64\> | Incident flux at right boundary (N/2 values, only if reflex_der=0) |
-
-## Algorithm Details
-
-### Discrete Ordinates Method
-
-The S_N method discretizes the angular variable using Gaussian quadrature. The solution vector is composed of angular fluxes ψ(x, μ) evaluated at N/2 quadrature points for positive and negative cosines.
-
-### Sweep Algorithm
-
-1. **Update Boundaries**: Apply reflective conditions if applicable
-2. **Transport Sweep**: Solve the discretized transport equation in each cell
-3. **Update Scalar Flux**: Integrate angular fluxes over all directions
-4. **Convergence Check**: Compare relative change in scalar flux with tolerance
-
+Keys starting with `_` are treated as comments. The effective configuration is
+embedded in every output run under `configuration`.
 
 ## Output
 
-Results are saved to a timestamped output file (e.g., `data_1765423402.out`) containing the scalar neutron flux distribution across all spatial cells.
+`output_1d_###.json`:
 
-## Examples
-
-### Example 1: Simple 1D Problem
-
-```rust
-use neutron_transport_dd::algorithm::{Config, Runner};
-
-fn main() {
-    let config = Config::new_auto(1e-5, 500, "data/input.json")
-        .expect("Failed to load configuration");
-    
-    let mut runner = Runner::new(config);
-    let result = runner.run();
-    
-    if result.converged {
-        println!("Solution converged in {} iterations", result.iteration);
-        println!("Final scalar flux range: {:.6} to {:.6}", 
-                 result.scalar_flux.min(), 
-                 result.scalar_flux.max());
-    } else {
-        println!("Warning: Maximum iterations reached");
-    }
+```text
+{
+  "solver": "NTS_DD_1D",
+  "spatial_schemes": ["DD"],
+  "runs": [ { "config_name", "configuration", "scalar_flux", "angular_flux",
+              "miu", "omega", "iteration", "iteration_eigenvalue",
+              "converged", "mode", "spatial_scheme", "k_eff", "k_balance",
+              "k_history", "k_converged", "outer_iterations", "power_w",
+              "power_scale", "power_unnormalized", "source", "timestamp" } ],
+  "total": 1,
+  "failures": 0,
+  "generated_at": "..."
 }
 ```
 
-### Example 2: Interactive Mode
+A failed configuration is recorded as `{"config_name", "error", "timestamp"}`
+and does not abort the remaining runs.
 
-Run the program without arguments:
+## Numerical parity
 
-```bash
-cargo run
+The test-suite reproduces the Python reference results exactly (f64):
+
+| Case | Reference |
+|------|-----------|
+| S2 20 cm slab, DD, `epsilon=1e-5` | iteration counter and fluxes equal to 1e-12 |
+| 20 cm vacuum slab, S8, 100 cells, `epsilon=1e-6` | 999 sweeps, `k_eff = 1.0266764379437188` |
+| Same, `epsilon=1e-5` | 623 sweeps, `k_eff = 1.0266605744526358` |
+| Injected SC scheme, `epsilon=1e-6` | `k_eff = 1.026054` |
+| Reflective infinite medium | `k_eff = nu*Sigma_f / Sigma_a` |
+
+## Project layout
+
+```text
+src/
+  config.rs       JSON schema, validation, per-cell data, as_dict
+  quadrature.rs   Embedded S2/S4/S6/S8 Gauss-Legendre data
+  scheme.rs       DD / STEP / SC cell kernels and theta
+  power.rs        Fission integral and power normalization
+  core/runner.rs  Transport sweep, modes, k_eff, balance
+  result.rs       RunResult and output payload
+  paths.rs        NTS_HOME / outputs/results / auto-numbering
+  wizard.rs       Interactive --manual configuration
+  main.rs         nts-rs CLI
+tests/            Pseudocode equivalence, fission modes, schemes, ...
 ```
-
-The program will guide you through entering:
-- Number of regions and material zones
-- Spatial mesh configuration
-- Material properties (cross-sections)
-- External source terms
-- Boundary conditions
-- Ordinate number (N)
-- Convergence parameters
-
-## Performance
-
-- **Typical Runtime**: ~200-300ms for medium-sized problems (30-50 cells, S_8 quadrature)
-- **Scalability**: Linear time complexity in number of spatial cells and quadrature ordinates
-- **Memory**: Efficient matrix storage using nalgebra's optimized data structures
-
-## Dependencies
-
-- **nalgebra**: Linear algebra operations
-- **serde & serde_json**: JSON deserialization
-- **clap**: Command-line argument parsing
-- **once_cell**: Lazy static quadrature data
 
 ## Testing
 
-Run the full test suite:
-
 ```bash
 cargo test
+cargo clippy --all-targets --all-features
+cargo fmt --all -- --check
 ```
 
-Run tests with output:
+See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
-```bash
-cargo test -- --nocapture
-```
+## Not ported yet (next steps)
 
-The test suite includes:
-- **11 Unit Tests**: Core algorithm and data structure validation
-- **10 Integration Tests**: Complete workflow testing from input to output
-- **32 Total Tests**: All passing ✓
+1. `validate`, `list`, `show`, `status`, logging to file.
+2. `nts-generate` placeholders (`kk`/`mm`) and `nts-1d-config`.
+3. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
+4. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
+5. TUI and PINN integration.
 
-## Building Documentation
+Python `.py` configuration modules (`-c inputs.py`) are not supported; use JSON
+until the generator step lands.
 
-Generate and view the API documentation:
+## Physics references
 
-```bash
-cargo doc --open
-```
+- Lewis & Miller, *Computational Methods of Neutron Transport* (1984)
+- Duderstadt & Hamilton, *Nuclear Reactor Analysis* (1976)
+- Lathrop, *Remedial Comments on the Computing Time Required for Solving the S_N Equations* (1968)
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
-
-## Physics References
-
-The implementation follows standard practices in neutron transport theory:
-- Lewis & Miller, "Computational Methods of Neutron Transport" (1984)
-- Duderstadt & Hamilton, "Nuclear Reactor Analysis" (1976)
-- Lathrop, "Remedial Comments on the Computing Time Required for Solving the $S_N$ Equations" (1968)
-
-## Author
-
-Carlos - Nuclear Physics & Scientific Computing
-
-## Changelog
-
-### Version 0.1.0
-- Initial release
-- S_N discrete ordinates method implementation
-- Sweep algorithm with domain decomposition
-- JSON configuration support
-- Interactive CLI mode
-- Comprehensive test suite
-- Full API documentation
+MIT.

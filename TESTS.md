@@ -1,188 +1,119 @@
-# Suite de Tests - Neutron Transport DD
+# Test suite - Neutron Transport DD
 
-## Descripción General
+97 tests (30 unit, 66 integration, 1 doc-test) covering configuration,
+spatial schemes, the transport sweep, the four physics modes, the interactive
+wizard and the CLI/output format.
 
-La aplicación cuenta con una suite completa de tests que cubren:
-- **Carga automática de configuración** desde `data/input.json`
-- **Validación de estructuras de datos** y vectores
-- **Simulación del algoritmo S_N**
-- **Convergencia y cálculos numéricos**
-- **Condiciones de frontera**
-- **Generación de salida**
+Run everything with:
 
-## Estructura de Tests
-
-### Tests Unitarios (11 pruebas)
-Ubicados en: `src/algorithm.rs` (módulo `tests`)
-
-#### 1. `test_config_new_auto_basic`
-- Verifica que la configuración se cargue correctamente desde JSON
-- Valida: `num_regions`, `num_zones`, `n`
-
-#### 2. `test_weights_directions_s4`
-- Verifica que los pesos de cuadratura S4 sean correctos
-- Valida que la suma de pesos = 1.0
-- Verifica 2 direcciones para S4
-
-#### 3. `test_prelim_calculations_vectors`
-- Verifica tamaños correctos de vectores preliminares
-- Valida valores no negativos
-
-#### 4. `test_runner_initialization`
-- Comprueba que el runner se inicializa correctamente
-- Verifica estado inicial: no convergido, iteración 0
-
-#### 5. `test_convergence_check_negative_flux`
-- Simula cambio en flujo y verifica que NO converge
-- Prueba lógica de criterio de convergencia
-
-#### 6. `test_epsilon_effect_on_convergence`
-- Compara convergencia con epsilon flojo vs. ajustado
-- Verifica que criterio flojo converja más rápido
-
-#### 7. `test_reflect_boundary_conditions`
-- Valida condiciones de frontera reflexivas
-- Verifica valores de frontera cargados desde JSON
-
-#### 8. `test_material_zones_mapping`
-- Verifica mapeo correcto zona → propiedades
-- Valida índices y referencias
-
-#### 9. `test_quadrature_weights_positive`
-- Verifica que pesos y cosenos sean válidos
-- Valida rangos: ω > 0, μ ∈ [0,1]
-
-#### 10. `test_scalar_flux_non_negative`
-- Ejecuta simulación completa
-- Verifica que flujo escalar ≥ 0
-
-#### 11. `test_runner_max_iterations_limit`
-- Verifica que las iteraciones no excedan `max_iter`
-- Usa epsilon muy pequeño para forzar límite
-
-### Tests de Integración (10 pruebas)
-Ubicados en: `tests/integration_tests.rs`
-
-#### 1. `test_auto_input_loading`
-- Lee `data/input.json` completamente
-- Valida NC, HR, IZL, SCT, SCS, Q, N, condiciones frontera
-- Compara contra valores esperados
-
-#### 2. `test_cell_and_node_counts`
-- Verifica: NTC = 100 (suma de NC)
-- Verifica: NTP = 101 (NTC + 1)
-
-#### 3. `test_property_vectors`
-- Valida que vectores sigma_t, sigma_s, q_ext tengan 100 elementos
-- Verifica valores por región:
-  - Región 1: σ_t=1.0, σ_s=0.99
-  - Región 2: σ_t=0.6, σ_s=0.4
-  - Región 3: σ_t=1.0, σ_s=0.9
-
-#### 4. `test_mesh_spacing`
-- Verifica dx en cada región
-- Todas las regiones: dx = 0.5 cm
-
-#### 5. `test_runner_simulation`
-- Ejecuta simulación completa
-- Valida convergencia en < 2000 iteraciones
-- Verifica flujo positivo
-- Comprueba tiempo < 10 segundos
-
-#### 6. `test_angular_flux_dimensions`
-- Verifica dimensiones de matrices de flujo angular
-- psi_right, psi_left: [101 x 2]
-
-#### 7. `test_boundary_conditions`
-- Valida: reflex_izq=true, reflex_der=false
-- Verifica vectores bound_left, bound_right
-
-#### 8. `test_different_epsilon`
-- Carga config con epsilon=1e-2
-- Carga config con epsilon=1e-7
-- Valida valores asignados
-
-#### 9. `test_missing_input_file` (should panic)
-- Intenta cargar archivo inexistente
-- Verifica que el programa lance excepción
-
-#### 10. `test_output_file_creation`
-- Valida creación de archivos `.out`
-- Verifica contenido: título, convergencia, flujo
-
-## Cobertura de Flujos
-
-### Flujo Manual Input
-No hay tests explícitos (requiere stdin), pero el código está validado a través de tests unitarios.
-
-### Flujo Automático Input
-✅ **Completamente cubierto** por:
-- `test_auto_input_loading`
-- `test_config_new_auto_basic`
-- Todos los tests de validación de propiedades
-
-### Flujo de Simulación
-✅ **Completamente cubierto** por:
-- `test_runner_simulation`
-- `test_epsilon_effect_on_convergence`
-- `test_scalar_flux_non_negative`
-- `test_angular_flux_dimensions`
-
-### Flujo de Salida
-✅ **Completamente cubierto** por:
-- `test_output_file_creation`
-
-## Ejecutar Tests
-
-### Todos los tests
 ```bash
 cargo test
 ```
 
-### Solo tests unitarios
+Useful variants:
+
 ```bash
-cargo test --lib
+cargo test -- --nocapture          # show prints
+cargo test --test schemes          # only one target
+cargo clippy --all-targets --all-features
+cargo fmt --all -- --check
 ```
 
-### Solo tests de integración
-```bash
-cargo test --test integration_tests
-```
+## Unit tests (inside `src/`)
 
-### Test específico
-```bash
-cargo test test_auto_input_loading
-```
+| Module | Cases |
+|--------|-------|
+| `quadrature` | N/2 table sizes, weights sum to 1, directions in (0,1) and decreasing, odd/untabulated orders rejected |
+| `scheme` | name aliases and canonical round-trip, invalid names, theta limits/series/monotonicity, cell balance for DD/STEP/SC, SC→DD thin limit, SC→STEP thick limit, `mu` sign, zero `mu`, no positivity clipping, `prepare` shape |
+| `config` | vectorised base config, scalar boundary expansion, bad length, comment keys, integer booleans, odd quadrature, fission inference/validation, `as_dict` round-trip, forced scheme |
+| `power` | fission integral factor 2, zero-production normalization error |
+| `paths` | zero-padded output name |
+| doc-test | README-style eigenvalue example |
 
-### Con salida verbose
-```bash
-cargo test -- --nocapture
-```
+## Integration tests (`tests/`)
 
-## Resultados Esperados
+### `dd_pseudocode.rs` - equivalence with the literal DD algorithm
 
-```
-running 32 tests
+S2, 20 cm slab, `Sigma_t=1`, `Sigma_s=0.97`, unit incoming flux on the left.
+The literal pseudoalgorithm (right sweep, left sweep, relative change) is
+reimplemented in the test and compared with `Runner`:
 
-Test Summary:
-- Unitarios (lib): 11 passed ✅
-- Unitarios (bin): 11 passed ✅
-- Integración: 10 passed ✅
+- same iteration counter (exact),
+- scalar flux, angular averages and interface fluxes within `1e-12`,
+- 5, 10 and 20 cells,
+- mode inference when `MODE` is omitted.
 
-test result: ok. 32 passed; 0 failed
-```
+### `fission_modes.rs` - multiplicative media
 
-## Notas Importantes
+| Test | Expectation |
+|------|-------------|
+| reflective infinite medium | `k_eff = k_inf = 0.6` (±1e-6) |
+| 20 cm vacuum slab, S8, 100 cells | `k_eff = 1.02668` (±2e-4), `k_eff ≈ k_balance` |
+| `fixed_k` at the eigenvalue | `k_balance ≈ k*` (±1e-3) |
+| driven reflective slab (`k_inf=0.5`) | `k_eff = 1`, `k_balance = 0.5` (±1e-4) |
+| `POWER_KW` without `NU` | `NU = 2.49` (U-238), power = 10 kW |
+| sweep counters | `iteration_eigenvalue == outer_iterations`; `None` for fixed source |
+| power normalization | 10 kW, scale × unnormalized = 10 kW |
+| fixed-source regression | no `k_eff`, converged |
+| mixed boundaries without source | zero flux |
+| mode inference | `NU_SIGF>0`, no `K_EFF`, no `MODE` → eigenvalue |
+| invalid combinations | 4 cases rejected |
 
-1. **Dependencia JSON**: Los tests de integración requieren `data/input.json`
-2. **Directorio actual**: Tests crean archivos `data_*.out` en directorio actual
-3. **Rendimiento**: Simulación completa toma ~100-200ms en modo debug
-4. **Paralelización**: Tests se ejecutan en paralelo por defecto
+### `schemes.rs` - spatial schemes at solver level
 
-## Mejoras Futuras
+- default `DD`, alias normalisation, invalid scheme rejected,
+- **DD regression**: `epsilon=1e-6` → 999 sweeps, 25 outer iterations,
+  `k_eff = 1.0266764379437188`, `k_balance = 1.0266775219239312`,
+  `phi[0] = 0.10320820280696363`, `sum(phi) = 67.70760151718076`,
+- injected SC scheme with `epsilon=1e-6` → `k_eff = 1.026054` (±1e-5),
+- reflective infinite medium `k=0.6` for DD/STEP/SC,
+- benchmark agreement: DD vs SC within `1e-3`, DD vs STEP within `2e-2`,
+  `k_eff` vs `k_balance` within `1e-4`,
+- solver-level cell balance for every scheme (`fixed_k`, residual < 1e-6),
+- fixed-source vacuum/reflective cases, symmetry of the reflective slab,
+- `scalar_flux = 0.5 * sum(omega * angular_flux)`.
 
-- [ ] Tests para flujo manual (mock stdin)
-- [ ] Benchmarks de rendimiento
-- [ ] Property-based testing (quickcheck)
-- [ ] Cobertura de líneas (tarpaulin)
-- [ ] CI/CD integration (GitHub Actions)
+### `convergence.rs` - flux criterion
+
+- old-flux denominator, `|1 - new/old|`,
+- negative flux, zero-flux absolute fallback,
+- tighter `epsilon` needs more sweeps,
+- identical fluxes give zero change.
+
+### `boundary_vector.rs`
+
+Scalar expansion, one-element list expansion, full vector kept, invalid length
+message (`bound_left must have 4 elements or one scalar; got 2`), reflective
+scalar safety.
+
+### `config_validation.rs`
+
+Missing required field, dimension mismatches, zone index range, negative
+`NU_SIGF`, `SIGMA_F > SCT`, `POWER_KW` without fission, `ZONE_NAMES` length and
+empty names, unsupported quadrature order, comment keys, integer booleans,
+mode inference branches, `as_dict` round-trip, forced scheme, file read errors.
+
+### `manual_wizard.rs`
+
+Scripted answers for: eigenvalue, power with default `NU`, power with
+`SIGMA_F`, `fixed_k` with source, driven with/without source, fixed source,
+invalid mode, forced scheme (skips the prompt), placeholder rejection in
+numeric fields, JSON-serializable summary.
+
+### `output_json.rs` - end-to-end CLI
+
+- reference schema (`solver`, `spatial_schemes`, `runs`, `total`, `failures`,
+  `generated_at`) and all run keys,
+- auto-numbering `output_1d_001.json`, `output_1d_002.json`,
+- failed config recorded without aborting the list (exit code 1),
+- forced `--scheme SC`,
+- explicit `--output`,
+- `--manual` through stdin,
+- missing `--json`/`--manual` error,
+- JSON list of objects.
+
+## Reference environment
+
+Tests are deterministic (no random inputs). Benchmarks use the Python
+reference values, so a regression in the sweep, the convergence criterion or
+the `k_eff` iteration fails with a precise tolerance.
