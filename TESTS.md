@@ -1,8 +1,8 @@
 # Test suite - Neutron Transport DD
 
-97 tests (30 unit, 66 integration, 1 doc-test) covering configuration,
+113 tests (35 unit, 77 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
-wizard and the CLI/output format.
+wizard, the CLI inspection commands, logging and the output format.
 
 Run everything with:
 
@@ -28,6 +28,8 @@ cargo fmt --all -- --check
 | `config` | vectorised base config, scalar boundary expansion, bad length, comment keys, integer booleans, odd quadrature, fission inference/validation, `as_dict` round-trip, forced scheme |
 | `power` | fission integral factor 2, zero-production normalization error |
 | `paths` | zero-padded output name |
+| `logging` | run-name sanitisation |
+| `cli` | object/list splitting, 2D detection, verbosity resolution |
 | doc-test | README-style eigenvalue example |
 
 ## Integration tests (`tests/`)
@@ -99,6 +101,18 @@ Scripted answers for: eigenvalue, power with default `NU`, power with
 `SIGMA_F`, `fixed_k` with source, driven with/without source, fixed source,
 invalid mode, forced scheme (skips the prompt), placeholder rejection in
 numeric fields, JSON-serializable summary.
+
+### `cli_basic.rs` - inspection commands and logging
+
+- `validate` valid/invalid configs, list input and `--json` payload.
+- 2D configs reported as pending (step 4).
+- `list inputs/outputs` text and JSON (solver, runs, failures).
+- `show` summary and raw `--json` dump; unknown files rejected.
+- `status` counts, `NTS_SOLVERS_DIR` warning, missing binaries do not fail.
+- daily log and per-run log files written with configuration and result.
+- `-q` suppresses progress, `-v` prints it; `--log-level` accepted.
+- `run --manual` through stdin with global flags.
+- unsupported JSON shapes rejected.
 
 ### `output_json.rs` - end-to-end CLI
 

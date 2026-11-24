@@ -21,6 +21,9 @@ workflow) are ported in later steps.
 - **Python-compatible output**: `output_1d_###.json` keeps the exact schema
   of the reference implementation, so `nts-1d-data`, `nts-1d-plot` and
   `nts-1d-excel` keep working.
+- **Inspection commands**: `validate`, `list`, `show` and `status`, all with
+  `--json`.
+- **Structured logging**: daily global log plus one log per run.
 - **Interactive wizard** (`--manual`) with the same question order and
   defaults as the Python CLI.
 - **No runtime data files**: quadrature data is embedded in the binary.
@@ -58,12 +61,52 @@ Options:
 | `--scheme DD\|STEP\|SC` | Force the spatial scheme, ignoring `SPATIAL_SCHEME` |
 | `-e, --epsilon TOL` | Flux convergence tolerance (default `1e-5`) |
 | `-m, --max-iter N` | Maximum flux updates (default `2000`) |
-| `-v, --verbose` | Print per-run progress |
+
+Global options accepted by every subcommand:
+
+| Flag | Description |
+|------|-------------|
+| `-v, --verbose` | Debug logging and per-run progress (repeat for trace) |
+| `-q, --quiet` | Only errors |
+| `--log-level LEVEL` | Explicit level: `error`, `warn`, `info`, `debug`, `trace` |
 
 The work directory is `NTS_HOME` when set, otherwise the current directory.
 Runs write `outputs/results/output_1d_###.json`, auto-numbered.
 
 Exit codes: `0` success, `1` one or more runs failed, `130` cancelled.
+
+### Inspection commands
+
+```bash
+nts-rs validate data/example_eigenvalue.json          # check a config (or list)
+nts-rs validate configs.json --json                   # machine-readable result
+nts-rs list inputs                                    # outputs/inputs
+nts-rs list outputs --json                            # solver, runs, failures
+nts-rs show outputs/results/output_1d_001.json        # per-run summary
+nts-rs status                                         # dirs, counts, 2D solvers
+```
+
+- `validate` accepts an object or a list and reports the effective regions,
+  zones, cells, scheme, mode and boundaries. 2D configs are reported as
+  pending (step 4).
+- `list` reports size and modification time; 1D outputs also show the solver,
+  number of runs and failures.
+- `show` prints convergence, iterations, `k_eff`, `k_balance` and power per
+  run; `--json` dumps the raw payload.
+- `status` never fails because of missing 2D binaries: it warns. It exits `1`
+  only on real I/O errors.
+
+### Logging
+
+Every command writes:
+
+- `outputs/logs/nts-rs.log.YYYY-MM-DD` (daily, `trace` level) — rotation is by
+  day;
+- `outputs/logs/runs/<timestamp>_<run>.log` for `run`, with the effective
+  configuration and the result summary.
+
+The console level is `warn` by default; `-v` switches to `debug`, `-vv` to
+`trace`, and `-q` to `error`. `--log-level` overrides both.
 
 ## Library usage
 
@@ -178,14 +221,16 @@ src/
   result.rs       RunResult and output payload
   paths.rs        NTS_HOME / outputs/results / auto-numbering
   wizard.rs       Interactive --manual configuration
-  main.rs         nts-rs CLI
-tests/            Pseudocode equivalence, fission modes, schemes, ...
+  logging.rs      fern console + daily file + per-run logs
+  cli/            run, validate, list, show, status
+  main.rs         Entry point (delegates to cli::main)
+tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
 ```
 
 ## Testing
 
 ```bash
-cargo test
+cargo test          # 113 tests
 cargo clippy --all-targets --all-features
 cargo fmt --all -- --check
 ```
@@ -196,11 +241,10 @@ See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
 The full rewrite plan lives in [doc/PLAN.md](doc/PLAN.md).
 
-1. `validate`, `list`, `show`, `status`, logging to file.
-2. `nts-generate` placeholders (`kk`/`mm`) and `nts-1d-config`.
-3. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
-4. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
-5. TUI and PINN integration.
+1. `nts-generate` placeholders (`kk`/`mm`) and `nts-1d-config`.
+2. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
+3. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
+4. TUI and PINN integration.
 
 Python `.py` configuration modules (`-c inputs.py`) are not supported; use JSON
 until the generator step lands.

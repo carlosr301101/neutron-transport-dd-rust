@@ -67,8 +67,8 @@ posteriores:
 | Comando Python | Comando Rust (objetivo) | Estado |
 |----------------|--------------------------|--------|
 | `nts tui` | `nts-rs tui` | paso 5 |
-| `nts status` | `nts-rs status` | paso 1 |
-| `nts validate` | `nts-rs validate` | paso 1 |
+| `nts status` | `nts-rs status` | hecho (1D; 2D en 4) |
+| `nts validate` | `nts-rs validate` | hecho |
 | `nts generate` (2D `input.txt`) | `nts-rs generate` | paso 4 |
 | `nts-generate` / `nts generate --place-holder` | `nts-rs expand` | paso 2 |
 | `nts-1d-config` | `nts-rs config` | paso 2 |
@@ -79,7 +79,7 @@ posteriores:
 | `nts-1d-excel` | `nts-rs excel` | paso 3 |
 | `nts-1d-plot` | `nts-rs plot` | paso 3 |
 | `nts plot` (heatmap 2D) | `nts-rs plot2d` | paso 4 |
-| `nts list` / `nts show` | `nts-rs list` / `nts-rs show` | pasos 1 y 4 |
+| `nts list` / `nts show` | `nts-rs list` / `nts-rs show` | hecho (1D; 2D en 4) |
 | `python -m cli.run_tests` | `cargo test` | hecho |
 
 Nota: el `run` actual es 1D. En el paso 4, el runner de binarios C se expone
@@ -143,7 +143,7 @@ Integración (66): `dd_pseudocode`, `fission_modes`, `schemes`,
 
 ---
 
-## Paso 1 — CLI base, validación y logging
+## Paso 1 — CLI base, validación y logging (completado)
 
 **Objetivo:** dejar de tener un CLI de un solo comando y añadir las utilidades
 de inspección y diagnóstico, además de logging a archivo.
@@ -155,64 +155,75 @@ de inspección y diagnóstico, además de logging a archivo.
 ```text
 src/
   cli/
-    mod.rs        # Cli, Command y dispatch (mueve lo de main.rs)
-    run.rs        # lógica del run 1D actual
+    mod.rs        # Cli, Command, GlobalArgs y dispatch
+    run.rs        # lógica del run 1D
     validate.rs
     list.rs
     show.rs
     status.rs
-    output.rs     # tablas/resúmenes en texto (sin rich)
-  logging.rs      # archivo rotativo + consola
+  logging.rs      # fern: consola + archivo diario + log por run
 ```
 
-`main.rs` queda como envoltorio: parsea, resuelve logging y delega.
+`main.rs` es un envoltorio de tres líneas que llama a `cli::main`.
 
-### Comandos
+### Comandos y opciones globales
 
 ```text
-nts-rs validate <config.json>
-nts-rs list inputs|outputs
-nts-rs show <output.json>
-nts-rs status
+nts-rs [-v|-q] [--log-level LEVEL] <COMMAND>
+
+  run       --json FILE | --manual [-o PATH] [--scheme S] [-e TOL] [-m N]
+  validate  <config.json> [--json]
+  list      inputs|outputs [--json]
+  show      <output.json> [--json]
+  status    [--json]
 ```
 
-- **`validate`**: acepta un objeto o una lista JSON. Valida con
-  `Config::from_value`. Imprime un resumen: regiones, zonas, N por hemisferio,
-  celdas totales, tolerancia, modo inferido, fuente total, condiciones de
-  frontera. Errores con la ruta del campo. Exit 0/1.
-- **`list inputs`**: `outputs/inputs/*.json` ordenados; `list outputs`:
-  `outputs/results/output_1d_*.json` con total de runs y fallos.
-- **`show <output>`**: para el payload 1D imprime por run `config_name`,
-  `mode`, `spatial_scheme`, `converged`, `iteration`, `outer_iterations`,
-  `k_eff`, `k_balance`, `power_w`, `timestamp`. Para outputs 2D (paso 4)
-  imprime `STATUS`, `ITER`, `CPU`, `MFLUX`.
-- **`status`**: raíz de trabajo, existencia/creación de directorios, conteo de
-  configs y resultados, y disponibilidad de los binarios C 2D
-  (`NTS_SOLVERS_DIR`). Nunca falla por binarios ausentes: avisa.
+- **`validate`**: objeto o lista JSON. Resumen con regiones, zonas, celdas,
+  S_N, esquema, modo, `k_eff`, fronteras y fuente externa (`Σ Q_r·HR_r`).
+  Errores con el mensaje exacto del paso 0. Configs 2D se reportan como
+  pendientes del paso 4. Exit 0/1.
+- **`list inputs`**: `outputs/inputs/*.json` y `*.txt`; **`list outputs`**:
+  `outputs/results/output_*.json`, con solver, runs y fallos para 1D.
+- **`show`**: cabecera (solver, fecha, total, fallos, esquemas) y una línea por
+  run con modo, esquema, convergencia, iteraciones (outer), `k_eff`,
+  `k_balance` y potencia. Runs con `error` se muestran como `ERROR: ...`.
+  `--json` vuelca el payload original sin transformar.
+- **`status`**: raíz de trabajo, presencia de directorios, conteo de configs,
+  resultados 1D/2D y logs; si `NTS_SOLVERS_DIR` está definido, lista los cinco
+  binarios C indicando cuáles faltan. Nunca falla por binarios ausentes; solo
+  devuelve error ante fallos reales de E/S.
 
 ### Logging
 
-- Crate `log` + implementación propia (o `fern`) con dos destinos:
-  `outputs/logs/nts-rs-YYYYMMDD.log` (rotación diaria) y consola.
-- Nivel: `--verbose` → `debug`, `-q/--quiet` → `error`, por defecto `warn`.
-  También `NTS_LOG_LEVEL` como override.
-- Formato: `TIMESTAMP LEVEL mensaje`.
-- El core sigue silencioso; solo el CLI y el wizard escriben.
+- Crate `fern` (`date-based`) con dos destinos:
+  `outputs/logs/nts-rs.log.YYYY-MM-DD` (nivel `trace`) y consola (`stderr`).
+- Nivel de consola: `warn` por defecto; `-v` → `debug`; `-vv` → `trace`;
+  `-q` → `error`; `--log-level` tiene prioridad.
+- Log por run en `outputs/logs/runs/<timestamp>_<config_name>.log` con la
+  configuración efectiva y el resumen del resultado (o el error).
+- Formato: `YYYY-MM-DDTHH:MM:SS LEVEL mensaje`. El core sigue silencioso.
 
-### Tests (`tests/cli_basic.rs`)
+### Tests (`tests/cli_basic.rs`, 11 casos)
 
-- `validate` con config válida (exit 0, resumen) e inválida (exit 1, mensaje).
-- `list` con directorios vacíos y poblados.
-- `show` con payload 1D generado por `run`.
-- `status` con y sin `NTS_SOLVERS_DIR`.
-- Log creado en `outputs/logs/`, nivel aplicado, `--quiet` sin salida.
-- Byte-compatibilidad: `show` no altera el JSON.
+- `validate` válido/ inválido y `--json`; config 2D pendiente.
+- `list inputs/outputs` en texto y JSON (solver, runs, fallos).
+- `show` con payload generado por `run`, volcado JSON y archivo desconocido.
+- `status` con y sin `NTS_SOLVERS_DIR`; binarios ausentes no fallan.
+- Logs diario y por run creados y con contenido.
+- `-q` silencia el progreso, `-v` lo muestra, `--log-level` aceptado.
+- `run --manual` por stdin combinado con flags globales.
+- Formas JSON no soportadas rechazadas.
 
-### Criterios de aceptación
+### Criterios de aceptación (verificados)
 
-- `nts-rs --help` lista los nuevos subcomandos.
-- Ningún comando escribe fuera de `NTS_HOME`.
-- Tests verdes y clippy limpio.
+- [x] `nts-rs --help` lista los nuevos subcomandos.
+- [x] Ningún comando escribe fuera de `NTS_HOME`.
+- [x] `--json` en `validate`/`list`/`show`/`status`.
+- [x] Logs en `outputs/logs/` y `outputs/logs/runs/`.
+- [x] Suite total: 113 tests verdes, `clippy` y `fmt` limpios, `cargo doc`
+      sin warnings.
+- [x] El comportamiento de `run` del paso 0 no cambia (`-v` sigue mostrando
+      el progreso).
 
 ### Esfuerzo: S/M.
 
@@ -659,7 +670,7 @@ nts-rs dataset --json base.json \
 | Paso | Depende de | Esfuerzo | Riesgo principal |
 |------|------------|----------|------------------|
 | 0 | — | L (hecho) | paridad numérica |
-| 1 | 0 | S/M | logging sin ensuciar el core |
+| 1 | 0 | S/M (hecho) | logging sin ensuciar el core |
 | 2 | 1 | M | semántica zip/redondeo |
 | 3 | 0, 1 | M/L | plots sin display, Excel |
 | 4 | 1 | M/L | binarios externos, paralelismo |
