@@ -127,6 +127,8 @@ pub enum Command {
     Excel(excel::ExcelCommand),
     /// Render scalar/angular flux, k history or sweep plots.
     Plot(plot::PlotCommand),
+    /// Launch the terminal user interface.
+    Tui,
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -156,6 +158,7 @@ pub fn main() -> ExitCode {
         Command::Normalize(command) => normalize::execute(command),
         Command::Excel(command) => excel::execute(command),
         Command::Plot(command) => plot::execute(command),
+        Command::Tui => crate::tui::run(),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),

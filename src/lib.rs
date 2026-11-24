@@ -43,4 +43,5 @@ pub mod power;
 pub mod quadrature;
 pub mod result;
 pub mod scheme;
+pub mod tui;
 pub mod wizard;
