@@ -2,7 +2,7 @@
 
 use neutron_transport_dd::config::Config;
 use neutron_transport_dd::tui::app::{App, Level, Tab};
-use neutron_transport_dd::tui::model::Validation;
+use neutron_transport_dd::tui::model::{FieldKind, Validation};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -83,13 +83,7 @@ fn editing_region_count_adds_rows() {
 #[test]
 fn quadrature_cycles_with_arrows() {
     let mut app = App::default();
-    let index = app
-        .model
-        .fields()
-        .iter()
-        .position(|field| field.label == "N")
-        .expect("quadrature row");
-    app.selected = index;
+    app.select_field(FieldKind::Quadrature);
     assert_eq!(app.model.n, 8);
     press(&mut app, KeyCode::Right);
     assert_eq!(app.model.n, 2);
@@ -166,13 +160,7 @@ fn tabs_switch_and_render_their_screens() {
 #[test]
 fn toggling_a_flag_does_not_open_the_editor() {
     let mut app = App::default();
-    let index = app
-        .model
-        .fields()
-        .iter()
-        .position(|field| field.label == "Reflective left")
-        .expect("row");
-    app.selected = index;
+    app.select_field(FieldKind::ReflexLeft);
     press(&mut app, KeyCode::Enter);
     assert!(app.editing.is_none());
     assert!(app.model.reflex_izq);
