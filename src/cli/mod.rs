@@ -4,6 +4,7 @@
 //! subcommand lives in its own module and returns an exit code.
 
 pub mod run;
+pub mod validate;
 
 use std::process::ExitCode;
 
@@ -105,6 +106,8 @@ pub struct Cli {
 pub enum Command {
     /// Run one configuration, a JSON list, or the interactive wizard.
     Run(run::RunCommand),
+    /// Validate one configuration or a list of them.
+    Validate(validate::ValidateCommand),
 }
 
 /// Entry point used by `src/main.rs`.
@@ -120,6 +123,7 @@ pub fn main() -> ExitCode {
     let verbose = cli.global.is_verbose();
     let outcome = match cli.command {
         Command::Run(command) => run::execute(command, verbose),
+        Command::Validate(command) => validate::execute(command),
     };
 
     match outcome {
@@ -145,10 +149,26 @@ pub(crate) fn split_configs(value: &Value) -> Result<Vec<(String, Value)>, Strin
     }
 }
 
+/// Detect a 2D configuration (validated in step 4).
+pub(crate) fn is_two_d_config(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    ["NZ", "zones", "NR_X", "XDOM", "ZMAP", "QMAP", "BC", "TOL"]
+        .iter()
+        .any(|key| object.contains_key(*key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn two_d_config_is_detected() {
+        assert!(is_two_d_config(&json!({"NZ": 1, "N": 4})));
+        assert!(!is_two_d_config(&json!({"num_zones": 1, "N": 4})));
+    }
 
     #[test]
     fn split_accepts_object_and_list() {
