@@ -38,6 +38,7 @@ por una implementación nativa en Rust.
 | Errores | `ConfigError` / `SolverError`, sin `panic!` en producción |
 | Impresión | Core silencioso; la CLI imprime |
 | Configs Python (`.py`) | No soportadas; todo pasa por JSON |
+| Paso 4 (2D) | Aparcado por decisión del usuario; se retomará al cerrar la reescritura |
 
 ## Contrato de paridad
 
@@ -66,7 +67,7 @@ posteriores:
 
 | Comando Python | Comando Rust (objetivo) | Estado |
 |----------------|--------------------------|--------|
-| `nts tui` | `nts-rs tui` | paso 5 |
+| `nts tui` | `nts-rs tui` | hecho |
 | `nts status` | `nts-rs status` | hecho (1D; 2D en 4) |
 | `nts validate` | `nts-rs validate` | hecho |
 | `nts generate` (2D `input.txt`) | `nts-rs generate` | paso 4 |
@@ -560,65 +561,84 @@ creación de directorios y numeración `outputs/inputs/input_###.txt`.
 
 ---
 
-## Paso 5 — TUI
+## Paso 5 — TUI (completado)
 
-**Objetivo:** portar `tui/` (Textual) a `ratatui` + `crossterm`.
+**Objetivo:** portar `tui/` (Textual) a `ratatui` + `crossterm`, reutilizando
+la librería existente.
 
-**Prerrequisitos:** pasos 0–3 (config, runs, results, plots, sweeps, export).
+**Prerrequisitos:** pasos 0–3.
 
-### Módulos
+### Stack y entrada
+
+- `ratatui` 0.30 + `crossterm` 0.29 (backend por defecto).
+- `nts-rs tui`; exige stdout interactivo y mínimo 80×24.
+- `ratatui::init` / `ratatui::restore` restauran el terminal en salida y ante
+  panic.
+- Preview inline opcional con la feature `images`:
+  `ratatui-image` 11 sin `chafa` (sixel/kitty/halfblocks) + `image` (PNG).
+
+### Módulos implementados
 
 ```text
-src/
-  tui/
-    app.rs            # estado global, bucle de eventos
-    schema.rs         # campos/validación del editor
-    models.rs         # configuración en edición
-    services/
-      paths.rs        # lectura/escritura en NTS_HOME
-      config_store.rs # guardar/cargar config_1d_###.json
-      runner.rs       # lanzar/cancelar runs, log en vivo
-      results.rs      # leer output_1d_###.json
-      plots.rs        # invocar plot
-      sweeps.rs       # placeholders y preview
-      export.rs       # datos.json / Excel
-    screens/
-      config.rs, run.rs, results.rs, plots.rs,
-      placeholders.rs, export.rs
-    widgets/
-      region_table.rs, zone_table.rs, fission_table.rs,
-      geometry_bar.rs, log_pane.rs, image_preview.rs
+src/tui/
+  mod.rs        # run(): comprobación de TTY, init/restore
+  app.rs        # estado, teclas, render de las 6 pantallas
+  model.rs      # formulario editable y validación
+  services/
+    config_store.rs  # listar/cargar outputs/inputs
+    results.rs       # listar/cargar outputs/results
+    runner.rs        # hilo + canal de eventos + cancelación
 ```
 
-### Funcionalidad
+Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
+`screens/` y `widgets/` para evitar duplicación); la lógica de negocio vive en
+`services/` y en los módulos de librería ya existentes.
 
-- **Config**: geometría, zonas, materiales, fisión condicional, fronteras;
-  tablas editables; barra de geometría proporcional; placeholders en campos
-  numéricos.
-- **Guardar**: `outputs/inputs/config_1d_###.json`.
-- **Run**: uno o varios configs, override de esquema, log en vivo,
-  cancelación, escritura de output y Excel opcional.
-- **Results**: `k_eff`, `k_balance`, iteraciones, convergencia, potencia.
-- **Plots**: scalar/angular/k-history/SCS; preview inline opcional con
-  `ratatui-image` (feature `images`).
-- **Placeholders**: rangos tipo `MM [10:20:1]`, preview, guardar JSON, batch.
-- **Export**: `datos.json`, Excel y plots SCS.
-- Atajos: `q` salir, `Tab`/flechas navegar, `Enter` editar, `r` run,
-  `s` guardar, `Ctrl+C` cancelar.
+### Fases
 
-### Tests
+- **Fase A (commit propio):** terminal, pestañas, formulario de configuración
+  (regiones, zonas, materiales, fronteras, física, potencia), barra de
+  geometría, validación con placeholders, guardado en
+  `outputs/inputs/config_1d_###.json`.
+- **Fase B (commit propio):** hook de cancelación en `Runner`
+  (`Arc<AtomicBool>` comprobado entre iteraciones), servicio de ejecución en
+  hilo con `mpsc`, pantalla Run (lista de configs, log en vivo, cancelar) y
+  pantalla Results (lista de outputs + tabla de runs).
+- **Fase C (commit propio):** editor de rangos de placeholders y expansión,
+  pantalla Plots (scalar, angular, k-history, scs), pantalla Export
+  (`datos.json`, Excel, SCS) y preview opcional.
 
-- `tests/tui_app.rs` con `ratatui::backend::TestBackend`: arranque, cambio de
-  pestaña, edición de celda, guardado (temp `NTS_HOME`).
-- `tests/tui_services.rs`: `paths`, `config_store` (numeración), `results`
-  (parseo), `sweeps` (expansión), `export` (archivos).
-- Golden/snapshot del buffer de las pantallas principales.
+### Teclas
 
-### Criterios de aceptación
+| Pantalla | Acciones |
+|----------|----------|
+| Config | `↑/↓` mover, `←/→` ciclar, `Enter` editar/toggle, `s` guardar, `v` validar |
+| Run | `↑/↓` seleccionar, `r` ejecutar, `c` cancelar |
+| Results | `↑/↓` seleccionar output |
+| Placeholders | `a` añadir, `d` borrar, `←/→` columna, `Enter` editar, `x` expandir |
+| Plots | `k`/`←/→` tipo, `g` generar, `o` abrir |
+| Export | `d` datos, `x` Excel, `s` SCS, `o` abrir |
+| Global | `Tab`/`Shift+Tab` cambiar pantalla, `q` salir |
 
-- Un ciclo completo (config → save → run → results → plot) sin salir de la TUI.
-- La TUI no bloquea ni corrompe la terminal al cancelar.
-- Funciona sin feature `images`; el preview es opcional.
+### Tests (38 nuevos, 212 totales)
+
+- Unitarios: `sweep` (3), `tui::model` (5), `tui::app` (2).
+- `tests/cancellation.rs` (3): cancelación predefinida, flag limpio y
+  cancelación entre iteraciones.
+- `tests/tui_app.rs` (9): render, terminal pequeño, edición, guardado,
+  validación, placeholders, pestañas, toggles.
+- `tests/tui_run.rs` (8): ejecución en segundo plano, cancelación, servicios,
+  pantallas Run/Results, arranque sin configs.
+- `tests/tui_export.rs` (8): rangos, expansión, PNGs, `datos.json`, Excel, SCS,
+  render de Export y rechazo sin TTY.
+
+### Criterios de aceptación (verificados)
+
+- [x] Ciclo Config → Save → Run → Results → Plot → Export sin salir de la TUI.
+- [x] Cancelación real dentro del solver.
+- [x] Salidas idénticas a las del CLI (misma librería).
+- [x] `cargo clippy --all-targets` limpio y `--features images` compila.
+- [x] Suite total: 212 tests.
 
 ### Esfuerzo: L.
 
@@ -693,7 +713,7 @@ nts-rs dataset --json base.json \
 | 2 | 1 | M (hecho) | semántica zip/redondeo |
 | 3 | 0, 1 | M/L (hecho) | plots sin display, Excel |
 | 4 | 1 | M/L | binarios externos, paralelismo |
-| 5 | 0–3 | L | alcance de la TUI |
+| 5 | 0–3 | L (hecho) | alcance de la TUI |
 | 6 | 2–4 | M | formatos de dataset |
 
 Sugerencia de ejecución: **1 → 2 → 3 → 4 → 5 → 6**, con un commit por paso y

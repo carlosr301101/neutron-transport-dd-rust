@@ -6,12 +6,11 @@ It solves the one-dimensional transport equation with Diamond Difference,
 Step and Step Characteristic spatial schemes, including reflective boundaries
 and multiplicative media (fission, `k_eff`, power iteration).
 
-This repository implements **steps 0–3** of the rewrite: the solver core, the
-configuration layer, the runner, the `run`/`validate`/`list`/`show`/`status`
-commands, logging, the configuration generator with placeholder sweeps
-(`config`, `expand`) and the post-processing tools (`data`, `normalize`,
-`excel`, `plot`). The 2D workflow, the TUI and the PINN integration are ported
-in later steps.
+This repository implements **steps 0–3 and 5** of the rewrite: the solver
+core, the configuration layer, the runner, the inspection commands, logging,
+the configuration generator with placeholder sweeps, the post-processing tools
+and the ratatui TUI. The 2D workflow (step 4, intentionally deferred) and the
+PINN dataset/packaging step are pending.
 
 ## Features
 
@@ -29,6 +28,8 @@ in later steps.
   placeholders; `expand` turns ranges into a list of validated configs.
 - **Post-processing**: `data` (`datos.json`), `normalize` (target power),
   `excel` (9-sheet workbook) and `plot` (PNG: scalar, angular, k-history, sweeps).
+- **TUI** (`nts-rs tui`): config editor, background runs with live log and
+  cancellation, results browser, placeholder sweeps, plots and export.
 - **Structured logging**: daily global log plus one log per run.
 - **Interactive wizard** (`--manual`) with the same question order and
   defaults as the Python CLI.
@@ -175,6 +176,34 @@ nts-rs plot -i outputs/results/datos.json --kind scs --x SCS
 - Plots use a bundled font (Liberation Sans, SIL OFL) and the bitmap backend,
   so no system font discovery or graphics library is required.
 
+## TUI
+
+```bash
+nts-rs tui
+```
+
+Built with `ratatui` + `crossterm`. Requires an interactive terminal of at
+least 80×24; the terminal is restored on exit and on panic.
+
+| Screen | What it does | Keys |
+|--------|--------------|------|
+| **Config** | Editable form: regions, zones, materials, boundaries, physics and power. Placeholders (`kk`, `mm`) are accepted in numeric fields. | `↑/↓` move, `←/→` cycle, `Enter` edit/toggle, `s` save, `v` validate |
+| **Run** | Lists `outputs/inputs`, runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
+| **Results** | Output list and a runs table (`mode`, scheme, convergence, iterations, `k_eff`, `k_balance`). | `↑/↓` select |
+| **Placeholders** | Range editor (`name`, `start`, `end`, `step`) and expansion over the selected config. | `a` add, `d` delete, `←/→` column, `Enter` edit, `x` expand |
+| **Plots** | Generates scalar, angular, k-history or SCS plots for the selected output. | `k`/`←/→` kind, `g` generate, `o` open |
+| **Export** | `datos.json`, Excel workbook and SCS plot. | `d`, `x`, `s`, `o` open |
+
+Configuration, expansion, plotting, Excel and `datos.json` use the same library
+code as the CLI, so the outputs are identical. Cancellation is checked inside
+the solver between iterations.
+
+Optional inline plot preview (sixel/kitty/halfblocks):
+
+```bash
+cargo build --release --features images
+```
+
 ## Library usage
 
 ```rust
@@ -296,8 +325,9 @@ src/
   placeholder.rs  Detection, replacement, grids and rounding
   logging.rs      fern console + daily file + per-run logs
   post/           model, geometry, data, normalize, excel, plot
+  tui/            app, model, services, screens (ratatui)
   cli/            run, config, expand, data, normalize, excel, plot,
-                  validate, list, show, status
+                  validate, list, show, status, tui
   main.rs         Entry point (delegates to cli::main)
 assets/fonts/     Liberation Sans + license (bundled plot font)
 tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
@@ -306,7 +336,7 @@ tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
 ## Testing
 
 ```bash
-cargo test          # 174 tests
+cargo test          # 212 tests
 cargo clippy --all-targets --all-features
 cargo fmt --all -- --check
 ```
@@ -317,8 +347,9 @@ See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
 The full rewrite plan lives in [doc/PLAN.md](doc/PLAN.md).
 
-1. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
-2. TUI and PINN integration.
+1. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries) —
+   deferred by design.
+2. PINN datasets (`nts-rs dataset`) and packaging/CI polish.
 
 Python `.py` configuration modules (`-c inputs.py`) are not supported; use JSON
 with `config`/`expand`.

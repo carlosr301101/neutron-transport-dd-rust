@@ -1,9 +1,10 @@
 # Test suite - Neutron Transport DD
 
-174 tests (52 unit, 121 integration, 1 doc-test) covering configuration,
+212 tests (62 unit, 149 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
-post-processing (data, normalize, Excel, plots) and the output format.
+post-processing (data, normalize, Excel, plots), cancellation, the TUI and the
+output format.
 
 Run everything with:
 
@@ -34,6 +35,9 @@ cargo fmt --all -- --check
 | `post::model` | run selectors (index/name/all), list and scalar access |
 | `post::geometry` | centres/edges from NC/HR/IZL, invalid meshes, index fallback |
 | `post::normalize` | scaling of scalar/angular fluxes, missing fission data |
+| `sweep` | reference grid, invalid ranges, unresolved placeholder |
+| `tui::model` | form conversion/validation, placeholders, resizing, quadrature, invalid values |
+| `tui::app` | tab cycling, geometry bar |
 | `cli` | object/list splitting, 2D detection, verbosity resolution |
 | doc-test | README-style eigenvalue example |
 
@@ -193,6 +197,42 @@ numeric fields, JSON-serializable summary.
 - JSON list of objects,
 - key order: `configuration` before `scalar_flux`, with `scalar_flux` as the
   first calculation result.
+
+### `cancellation.rs` - runner cancellation
+
+- preset flag aborts immediately with `cancelled`,
+- clear flag does not change the result,
+- mid-run cancellation from another thread stops between iterations.
+
+### `tui_app.rs` - config screen (phase A)
+
+- config and small-terminal rendering,
+- editing the region count adds rows and revalidates,
+- arrow cycling of the quadrature order,
+- save writes a loadable configuration,
+- invalid configurations are not saved,
+- placeholders reported as a template,
+- tabs render each screen, flag toggles without opening the editor.
+
+### `tui_run.rs` - run and results screens (phase B)
+
+- background run writes `output_1d` payload,
+- cancellation of a background run,
+- config/results services list and load files,
+- run screen lists configurations,
+- app runs a config to an explicit output and loads it,
+- results screen renders a payload,
+- starting without configs reports an error.
+
+### `tui_export.rs` - placeholders, plots and export (phase C)
+
+- placeholder screen adds ranges,
+- expansion writes `inputs_1d.json` with the reference grid,
+- plot screen generates PNGs (scalar, k-history; angular errors cleanly),
+- `datos.json` positions/values and Excel workbook,
+- SCS export,
+- export screen rendering,
+- `tui` refuses to start without a terminal.
 
 ## Reference environment
 
