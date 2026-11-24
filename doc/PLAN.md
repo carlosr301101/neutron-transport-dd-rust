@@ -1,28 +1,91 @@
 # Plan de reescritura a Rust
 
-Port del workflow 1D de
+Port del workflow 1D y 2D de
 [`neutron-transport-PINNs`](https://github.com/carlosr301101/neutron-transport-PINNs)
 (rama `main`, versión 3.10.0) hacia este crate: `neutron-transport-dd`, binario
 `nts-rs`.
 
-Objetivo: reproducir la física y el formato de salida de Python con paridad
-numérica verificable, sustituyendo dependencias pesadas (`numpy`, `pandas`,
-`pydantic`, `textual`) por una implementación nativa en Rust.
+Objetivo: reproducir la física y los formatos de salida de Python con paridad
+numérica verificable, sustituyendo `numpy`, `pandas`, `pydantic` y `textual`
+por una implementación nativa en Rust.
 
-## Decisiones de diseño
+## Índice
+
+- [Estado y decisiones](#estado-y-decisiones)
+- [Contrato de paridad](#contrato-de-paridad)
+- [Mapa del sistema Python](#mapa-del-sistema-python)
+- [Paso 0 — Configuración, runner y CORE (completado)](#paso-0--configuración-runner-y-core-completado)
+- [Paso 1 — CLI base, validación y logging](#paso-1--cli-base-validación-y-logging)
+- [Paso 2 — Placeholders, sweeps y generador de configs](#paso-2--placeholders-sweeps-y-generador-de-configs)
+- [Paso 3 — Post-proceso: data, normalize, Excel y plots](#paso-3--post-proceso-data-normalize-excel-y-plots)
+- [Paso 4 — Workflow 2D: input.txt y binarios C](#paso-4--workflow-2d-inputtxt-y-binarios-c)
+- [Paso 5 — TUI](#paso-5--tui)
+- [Paso 6 — Datasets PINN, empaquetado y CI](#paso-6--datasets-pinn-empaquetado-y-ci)
+- [Orden, dependencias y esfuerzo](#orden-dependencias-y-esfuerzo)
+- [Riesgos y notas](#riesgos-y-notas)
+
+## Estado y decisiones
 
 | Decisión | Elección |
 |----------|----------|
-| Alcance inicial | Librería + subcomando `run` (el resto de comandos en pasos posteriores) |
-| Binario | `nts-rs` (el paquete sigue siendo `neutron-transport-dd`) |
-| Salida | Idéntica a `output_1d_###.json` para que `nts-1d-data`, `nts-1d-plot` y `nts-1d-excel` sigan funcionando |
-| Modo manual | Incluido desde el paso 0 (`--manual`) |
-| Dependencias | `serde`, `serde_json`, `clap`, `chrono`; `tempfile` solo en tests |
-| Álgebra | `Vec<f64>` y slices planos; sin `nalgebra` |
-| Cuadratura | Tabla S2/S4/S6/S8 embebida, sin archivo en runtime |
-| Despacho de esquemas | `enum Method` con `match` (sin `dyn`) |
-| Errores | `ConfigError` / `SolverError` con `Display` manual, sin `panic!` |
-| Impresión | El core es silencioso; la CLI imprime |
+| Alcance del paso 0 | Librería + subcomando `run` |
+| Binario | `nts-rs` (paquete `neutron-transport-dd`) |
+| Salida 1D | Idéntica a `output_1d_###.json` (compatible con las tools Python) |
+| Modo manual | Incluido desde el paso 0 |
+| Dependencias base | `serde`, `serde_json`, `clap`, `chrono`; `tempfile` (tests) |
+| Álgebra | `Vec<f64>` y slices; sin `nalgebra` |
+| Cuadratura | S2/S4/S6/S8 embebida |
+| Errores | `ConfigError` / `SolverError`, sin `panic!` en producción |
+| Impresión | Core silencioso; la CLI imprime |
+| Configs Python (`.py`) | No soportadas; todo pasa por JSON |
+
+## Contrato de paridad
+
+Estas convenciones están fijadas por los tests y **no deben cambiar** en pasos
+posteriores:
+
+- `scalar_flux` es el **promedio angular**: `0.5 * Σ ω_m ψ_m`, con `Σω = 1`
+  por hemisferio (los N pesos completos suman 2).
+- Fuente isotrópica en el barrido: `S = Σs·φ + 0.5·Q + νΣf·φ/k`.
+- Convergencia: `max |φ_new − φ_old| / |φ_old|`; si `|φ_old| ≤ 1e-13` se usa la
+  diferencia absoluta.
+- Sin fixup de flujo negativo (Python no lo aplica).
+- Actualización reflectiva: derecha y luego izquierda.
+- `iteration` se incrementa una vez por actualización de flujo, dentro del
+  chequeo de convergencia.
+- Tolerancia interna: `max(epsilon, TOL_K)`.
+- Iteración de potencia: `k_new = k_old · P_new / P_old`, escalado por
+  `max|φ|`, `dk = |k_new − k_old| / |k_new|`.
+- `k_balance = P / (A + L)` con fuga neta en ambas fronteras.
+- Las tasas de reacción llevan factor 2 (φ es promedio angular).
+- Cualquier divergencia en estos puntos la detecta `tests/dd_pseudocode.rs`
+  (contador de iteraciones exacto) y el benchmark de `tests/schemes.rs`
+  (`k_eff = 1.0266764379437188`).
+
+## Mapa del sistema Python
+
+| Comando Python | Comando Rust (objetivo) | Estado |
+|----------------|--------------------------|--------|
+| `nts tui` | `nts-rs tui` | paso 5 |
+| `nts status` | `nts-rs status` | paso 1 |
+| `nts validate` | `nts-rs validate` | paso 1 |
+| `nts generate` (2D `input.txt`) | `nts-rs generate` | paso 4 |
+| `nts-generate` / `nts generate --place-holder` | `nts-rs expand` | paso 2 |
+| `nts-1d-config` | `nts-rs config` | paso 2 |
+| `nts run` (binarios 2D) | `nts-rs run2d` | paso 4 |
+| `nts run-1d` / `nts-1d-run*` | `nts-rs run` | hecho |
+| `nts-1d-data` | `nts-rs data` | paso 3 |
+| `nts-1d-normalize` | `nts-rs normalize` | paso 3 |
+| `nts-1d-excel` | `nts-rs excel` | paso 3 |
+| `nts-1d-plot` | `nts-rs plot` | paso 3 |
+| `nts plot` (heatmap 2D) | `nts-rs plot2d` | paso 4 |
+| `nts list` / `nts show` | `nts-rs list` / `nts-rs show` | pasos 1 y 4 |
+| `python -m cli.run_tests` | `cargo test` | hecho |
+
+Nota: el `run` actual es 1D. En el paso 4, el runner de binarios C se expone
+como `run2d` para no romper scripts existentes del workflow 1D.
+
+---
 
 ## Paso 0 — Configuración, runner y CORE (completado)
 
@@ -42,115 +105,586 @@ numérica verificable, sustituyendo dependencias pesadas (`numpy`, `pandas`,
 Eliminados: `src/algorithm.rs`, `tests/integration_tests.rs`,
 `data/cuadraturas.json`, dependencias `nalgebra` y `once_cell`.
 
-### Fases
+### Entregables
 
-- [x] **1. Esqueleto** — `error.rs`, `lib.rs`, `[[bin]] nts-rs`.
-- [x] **2. `quadrature.rs`** — S2/S4/S6/S8 verbatim; N impar o no tabulado → error
-      (sin fallback silencioso a S2).
-- [x] **3. `scheme.rs`** — DD/STEP/SC, alias (`dd`, `Step`, ` sc `,
-      `STEP_CHARACTERISTIC`, `STEP-CHARACTERISTIC`), `theta` con serie para
-      α < 1e-3, `|μ|` normalizado, error con μ = 0.
-- [x] **4. `config.rs`** — claves JSON de Python, comentarios `_`, booleanos
-      `0/1`, fronteras escalar/lista/vector, validación en el mismo orden y con
-      los mismos mensajes, inferencia de `MODE`, `as_dict()`.
-- [x] **5. `core/runner.rs`** — barrido en una pasada, 4 modos
-      (`fixed_source`, `fixed_k`, `driven`, `eigenvalue`), `k_history`,
-      `k_balance`, `inner_tol = max(epsilon, TOL_K)`, normalización de potencia.
-- [x] **6. `result.rs`, `paths.rs`, `main.rs`** — payload compatible, `NTS_HOME`,
-      numeración automática, `--json`, `--manual`, `--scheme`, `--epsilon`,
-      `--max-iter`, `--verbose`; códigos de salida 0/1/130.
-- [x] **7. `wizard.rs`** — mismas preguntas y defaults que `--manual` de Python.
-- [x] **8. Datos de ejemplo** — `data/input.json` (legado), 
-      `data/example_eigenvalue.json`, `data/example_driven.json`.
-- [x] **9. Tests y documentación** — ver matriz abajo; README y TESTS.md.
+- [x] `error.rs`: `ConfigError` / `SolverError` con `Display` y `source()`.
+- [x] `quadrature.rs`: S2/S4/S6/S8 verbatim; N impar o no tabulado → error.
+- [x] `scheme.rs`: DD/STEP/SC, alias de nombres, `theta` con serie (α < 1e-3),
+      `|μ|` normalizado, error con μ = 0, balance de celda.
+- [x] `config.rs`: claves JSON de Python, comentarios `_`, booleanos `0/1`,
+      fronteras escalar/lista/vector, validación en el mismo orden y con los
+      mismos mensajes, inferencia de `MODE`, vectores por celda, `as_dict()`.
+- [x] `core/runner.rs`: barrido en una pasada, `fixed_source`, `fixed_k`,
+      `driven`, `eigenvalue`, `k_history`, `k_balance`, normalización de
+      potencia, `iteration_eigenvalue`.
+- [x] `result.rs`: `RunResult` + `runs[]` y payload de `output_1d_###.json`.
+- [x] `paths.rs`: `NTS_HOME`, `outputs/results`, numeración `###`.
+- [x] `wizard.rs`: `--manual` con el mismo orden de preguntas.
+- [x] `main.rs`: `run --json|--manual`, `--scheme`, `--epsilon`,
+      `--max-iter`, `--output`, `--verbose`; códigos 0/1/130.
+- [x] `data/`: `input.json` legado, `example_eigenvalue.json`,
+      `example_driven.json`.
 
-### Convenciones que no deben cambiar
-
-- `scalar_flux` es el **promedio angular** (`0.5 * Σ ω_m ψ_m`, con Σω = 1 por
-  hemisferio). No es la integral total.
-- Fuente isotrópica: `S = Σs·φ + 0.5·Q + νΣf·φ/k`.
-- Convergencia: `max |φ_new − φ_old| / |φ_old|`, con `|φ_old| ≤ 1e-13`
-  usando diferencia absoluta.
-- Sin fixup de flujo negativo (Python no lo tiene).
-- Orden reflectivo: derecha y luego izquierda, igual que Python.
-- `iteration` se incrementa una vez por actualización de flujo, dentro del
-  chequeo de convergencia.
-
-### Matriz de tests (`tests/`)
-
-| Archivo | Origen Python | Casos |
-|---------|---------------|-------|
-| `dd_pseudocode.rs` | `test_dd_pseudocode*.py` | DD literal S2, 5/10/20 celdas, mismo `iteration`, flujos a 1e-12 |
-| `fission_modes.rs` | `test_dd_1d_fission.py` | k_inf=0.6, benchmark 1.02668, fixed_k, driven, `NU`=2.49, potencia 10 kW, contadores, regresión, fronteras mixtas, inferencia, 4 errores |
-| `schemes.rs` | `test_spatial_schemes.py` | alias, rechazo, regresión DD exacta, SC inyectado 1.026054, k=0.6 en 3 esquemas, benchmark, balance de celda, vacío/reflectivo, φ = promedio angular |
-| `convergence.rs` | `test_convergence.py` | denominador φ viejo, φ negativo, φ=0, ε más fino → más sweeps |
-| `boundary_vector.rs` | `test_boundary_vector.py` | escalar, lista de 1, vector, longitud inválida, reflectivo |
-| `config_validation.rs` | `config.py` + `test_dd_1d_json.py` | faltantes, dimensiones, IZL, NU_SIGF, SIGMA_F, POWER_KW, ZONE_NAMES, N no soportado, `_`, 0/1, inferencia, round-trip |
-| `manual_wizard.rs` | `test_dd_1d_manual.py` | eigenvalue, potencia (NU y SIGMA_F), fixed_k, driven (con/sin fuente), fixed_source, modo inválido, esquema forzado, placeholder rechazado |
-| `output_json.rs` | `cmd_run_1d` | esquema completo, numeración, fallo parcial, `--scheme`, `--output`, `--manual` por stdin, error sin fuente |
+### Tests (97)
 
 Unitarios (30) en `quadrature`, `scheme`, `config`, `power`, `paths`.
-Doc-test: ejemplo de eigenvalue del README.
+Integración (66): `dd_pseudocode`, `fission_modes`, `schemes`,
+`convergence`, `boundary_vector`, `config_validation`, `manual_wizard`,
+`output_json`. Doc-test (1): ejemplo de eigenvalue del README.
 
-### Criterios de aceptación (verificados)
+### Verificación
 
-- [x] `cargo fmt --all -- --check`.
-- [x] `cargo clippy --all-targets --all-features` sin warnings.
-- [x] `cargo test`: 97/97 (30 unit + 66 integración + 1 doc-test).
-- [x] `cargo doc --no-deps` sin warnings.
-- [x] `cargo build --release` → `target/release/nts-rs`.
-- [x] Benchmark S8 100 celdas, ε=1e-6: 999 sweeps, `k_eff = 1.026676437943719`,
-      `k_balance = 1.0266775219239306`, `Σφ = 67.70760151718075`.
-- [x] Benchmark con ε=1e-5: 623 sweeps.
-- [x] `data/input.json` legado sigue corriendo (`fixed_source`).
-- [x] Cero referencias a "diffusion" y sin `algorithm.rs`.
+- `cargo fmt --check`, `cargo clippy` sin warnings, 97/97 tests.
+- Benchmark S8, 100 celdas, ε=1e-6: 999 sweeps,
+  `k_eff = 1.026676437943719`, `k_balance = 1.0266775219239306`,
+  `Σφ = 67.70760151718075`.
+- ε=1e-5: 623 sweeps, `k_eff = 1.0266605744526358`.
+- SC inyectado: `k_eff = 1.026054`.
 
-## Pasos siguientes
+---
 
-### Paso 1 — CLI completa
+## Paso 1 — CLI base, validación y logging
 
-- `nts-rs validate <config>` con resumen legible.
-- `nts-rs list inputs|outputs`, `show <result>`, `status`.
-- Logging a archivo (`outputs/logs/`), nivel `--verbose`.
-- Sustituir el soporte de `-c inputs.py` por JSON (o un conversor `py → json`).
+**Objetivo:** dejar de tener un CLI de un solo comando y añadir las utilidades
+de inspección y diagnóstico, además de logging a archivo.
 
-### Paso 2 — Generación de configuraciones
+**Prerrequisitos:** paso 0.
 
-- Placeholders `kk`/`mm`: `nts-rs generate --json config.json
-  --place-holder kk 0.1 0.95 0.05`.
-- `RawConfig` con `NumOrName` para aceptar nombres simbólicos.
-- `nts-rs config` (wizard con placeholders) y escritura de
-  `outputs/inputs/config_1d_###.json` / `inputs_1d.json`.
+### Módulos
 
-### Paso 3 — Post-proceso
+```text
+src/
+  cli/
+    mod.rs        # Cli, Command y dispatch (mueve lo de main.rs)
+    run.rs        # lógica del run 1D actual
+    validate.rs
+    list.rs
+    show.rs
+    status.rs
+    output.rs     # tablas/resúmenes en texto (sin rich)
+  logging.rs      # archivo rotativo + consola
+```
 
-- `nts-rs data` (equivalente a `nts-1d-data`) → `datos.json`.
-- `nts-rs normalize` (`POWER_KW` sobre un output existente).
-- `nts-rs excel` (crate `rust_xlsxwriter`).
-- `nts-rs plot` (crate `plotters`): scalar, angular, `k_history`, SCS.
+`main.rs` queda como envoltorio: parsea, resuelve logging y delega.
 
-### Paso 4 — Workflow 2D
+### Comandos
 
-- `SimulationConfig` equivalente a Pydantic (`N`, `NZ`, `zones`, `NR_X`,
-  `XDOM`, `NR_Y`, `YDOM`, `ZMAP`, `QMAP`, `BC`, `TOL`).
-- `input_builder` para `input_###.txt`.
-- Runner paralelo de los binarios C (`NTS_DD`, `NTS_LD`, `NTS_STEP`,
-  `NTS_RM_CN`, `NTS_RM_LLN`) con pool configurable.
+```text
+nts-rs validate <config.json>
+nts-rs list inputs|outputs
+nts-rs show <output.json>
+nts-rs status
+```
 
-### Paso 5 — TUI y PINN
+- **`validate`**: acepta un objeto o una lista JSON. Valida con
+  `Config::from_value`. Imprime un resumen: regiones, zonas, N por hemisferio,
+  celdas totales, tolerancia, modo inferido, fuente total, condiciones de
+  frontera. Errores con la ruta del campo. Exit 0/1.
+- **`list inputs`**: `outputs/inputs/*.json` ordenados; `list outputs`:
+  `outputs/results/output_1d_*.json` con total de runs y fallos.
+- **`show <output>`**: para el payload 1D imprime por run `config_name`,
+  `mode`, `spatial_scheme`, `converged`, `iteration`, `outer_iterations`,
+  `k_eff`, `k_balance`, `power_w`, `timestamp`. Para outputs 2D (paso 4)
+  imprime `STATUS`, `ITER`, `CPU`, `MFLUX`.
+- **`status`**: raíz de trabajo, existencia/creación de directorios, conteo de
+  configs y resultados, y disponibilidad de los binarios C 2D
+  (`NTS_SOLVERS_DIR`). Nunca falla por binarios ausentes: avisa.
 
-- TUI con `ratatui` (config, runs, resultados, plots, export).
-- Integración con el entrenamiento PINN y generación de datasets.
+### Logging
+
+- Crate `log` + implementación propia (o `fern`) con dos destinos:
+  `outputs/logs/nts-rs-YYYYMMDD.log` (rotación diaria) y consola.
+- Nivel: `--verbose` → `debug`, `-q/--quiet` → `error`, por defecto `warn`.
+  También `NTS_LOG_LEVEL` como override.
+- Formato: `TIMESTAMP LEVEL mensaje`.
+- El core sigue silencioso; solo el CLI y el wizard escriben.
+
+### Tests (`tests/cli_basic.rs`)
+
+- `validate` con config válida (exit 0, resumen) e inválida (exit 1, mensaje).
+- `list` con directorios vacíos y poblados.
+- `show` con payload 1D generado por `run`.
+- `status` con y sin `NTS_SOLVERS_DIR`.
+- Log creado en `outputs/logs/`, nivel aplicado, `--quiet` sin salida.
+- Byte-compatibilidad: `show` no altera el JSON.
+
+### Criterios de aceptación
+
+- `nts-rs --help` lista los nuevos subcomandos.
+- Ningún comando escribe fuera de `NTS_HOME`.
+- Tests verdes y clippy limpio.
+
+### Esfuerzo: S/M.
+
+---
+
+## Paso 2 — Placeholders, sweeps y generador de configs
+
+**Objetivo:** reproducir `nts-1d-config` y `nts-generate` (expansión de
+parámetros) sin Python.
+
+**Prerrequisitos:** paso 1.
+
+### Módulos
+
+```text
+src/
+  placeholder.rs   # detección, reemplazo, grillas y redondeo
+  raw_config.rs    # NumOrName: número o nombre simbólico
+  cli/config.rs    # wizard con placeholders
+  cli/expand.rs    # expansión a lista JSON
+```
+
+### Modelo `RawConfig`
+
+Un campo numérico puede ser número o nombre (`kk`, `mm`, `tt`). Se representa
+con:
+
+```rust
+enum NumOrName { Number(f64), Name(String) }
+```
+
+Reglas heredadas de `core/placeholders.py`:
+
+- Un placeholder es un identificador `[A-Za-z_][A-Za-z0-9_]*`.
+- Se ignoran los campos de texto/enum: `SPATIAL_SCHEME`, `MODE`, `ZONE_NAMES`.
+- `detect_placeholders` recorre listas y objetos.
+- `replace_placeholders` sustituye solo los nombres conocidos y respeta los
+  campos de texto.
+- `build_values(start, end, step)`: grilla inclusiva; el último punto se
+  recorta a `end` si se pasa por épsilon; `step ≤ 0` y `end < start` → error.
+- Redondeo: se redondean **solo** los valores inyectados, a los decimales del
+  `STEP` de mayor precisión entre todos los placeholders.
+- Semántica de combinación: **zip**, no producto cartesiano. Se usa la longitud
+  mínima y se avisa si las longitudes difieren (igual que Python).
+
+### Comandos
+
+```text
+nts-rs config [-o outputs/inputs/config_1d_###.json]
+nts-rs expand --json config_1d_001.json \
+              --place-holder kk 0.1 0.95 0.05 \
+              [--place-holder mm 10 20 1] \
+              [-o outputs/inputs/inputs_1d.json]
+```
+
+- **`config`**: mismo wizard que `--manual`, pero los campos físicos aceptan
+  placeholders. Al guardar imprime el comando de expansión sugerido.
+  Nombre por defecto: `outputs/inputs/config_1d_###.json` (siguiente libre).
+- **`expand`**: lee un objeto o lista JSON, detecta placeholders, expande,
+  valida **cada** configuración expandida (con `Config::from_value`) y escribe
+  una lista JSON. Las configs inválidas se omiten con mensaje y exit 1 si hubo
+  omisiones. Nombres de salida: `json_config_001`, …
+- La salida `.py` de Python (`inputs.py`) no se genera; el reemplazo es JSON.
+  Documentar en `--help`.
+
+### Formatos
+
+Config con placeholders:
+
+```json
+{
+  "NC": [20], "HR": [20.0], "IZL": [1],
+  "SCT": [1.0], "SCS": ["kk"], "NU_SIGF": ["mm"],
+  "Q": [0.0], "N": 8, "MODE": "eigenvalue", "...": "..."
+}
+```
+
+Salida de `expand`:
+
+```json
+[
+  { "NC": [20], "SCS": [0.1], "NU_SIGF": [10.0], "...": "..." },
+  { "NC": [20], "SCS": [0.15], "NU_SIGF": [11.0], "...": "..." }
+]
+```
+
+### Tests (`tests/placeholders.rs`)
+
+Referencias: `tests/test_generate_1d_config.py` y
+`tests/test_generate_placeholder_json.py` de Python.
+
+- detección en valores, listas y objetos; exclusión de `MODE`/`SPATIAL_SCHEME`.
+- grilla inclusiva, recorte del último punto, `step` inválido.
+- redondeo por decimales del paso (`0.1` → 1 decimal; `1` → 0).
+- combinación zip y aviso por longitudes distintas.
+- `expand` produce una lista válida, con nombres y orden esperados.
+- placeholder sin expandir → config omitida con error.
+- config inválida → omitida, exit 1, resto de la lista intacta.
+- `config` escribe en `outputs/inputs/` y sugiere el comando correcto.
+- round-trip: `expand` → `run --json` funciona.
+
+### Criterios de aceptación
+
+- Una config con `kk`/`mm` se expande y corre de punta a punta.
+- Los valores expandidos coinciden con la grilla/redondeo de Python.
+- `NTS_HOME` respetado en todas las rutas.
+
+### Esfuerzo: M.
+
+---
+
+## Paso 3 — Post-proceso: data, normalize, Excel y plots
+
+**Objetivo:** cubrir `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel` y
+`nts-1d-plot`.
+
+**Prerrequisitos:** pasos 0 y 1 (paths).
+
+### Módulos
+
+```text
+src/
+  post/
+    extract.rs   # datos.json
+    normalize.rs # potencia sobre un output existente
+    excel.rs     # workbook
+    plot.rs      # PNG/SVG con plotters
+  cli/data.rs
+  cli/normalize.rs
+  cli/excel.rs
+  cli/plot.rs
+```
+
+Dependencias nuevas: `rust_xlsxwriter` (Excel), `plotters` (gráficas),
+`calamine` (solo dev, para leer el xlsx en tests).
+
+### `nts-rs data`
+
+```text
+nts-rs data [-r output_1d.json | --latest] \
+            [--positions 0 50 100] \
+            [--inputs configs.json] \
+            [-o outputs/results/datos.json]
+```
+
+- Prefiere `run.configuration` embebida; si falta, busca por `config_name` en
+  `--inputs`.
+- Fila por run: `config_name`, `SCS` (zona 1), `flux_<pos>` para cada posición,
+  `NU_SIGF` (zona 1) si existe, `spatial_scheme`, `mode`, `k_eff`, `k_balance`.
+- Posición fuera de rango → error por run (no aborta el resto).
+- Payload: `{ "data": [...], "positions": [...], "source": "...", "generated_at": ... }`
+  (mismo esquema que Python).
+
+### `nts-rs normalize`
+
+```text
+nts-rs normalize output_1d.json --power-kw 10 \
+                 [--nu 2.4] [--e-f-mev 200] [--area-cm2 1] \
+                 [--run 0 | --run manual | --run all] \
+                 [-o output_1d_normalized.json]
+```
+
+- Reconstruye `dx` desde `NC`/`HR` y `Σf` por celda desde `SIGMA_F` o
+  `NU_SIGF/NU` (con `NU` por defecto 2.49 y aviso).
+- Escala `scalar_flux` y `angular_flux` por `C_N = P_target / P_unnorm`.
+- Actualiza `power_unnormalized`, `power_scale` y `power_w`; conserva el resto.
+- Errores: malla inconsistente, integral nula, `E_F`/`AREA` no positivos.
+
+### `nts-rs excel`
+
+```text
+nts-rs excel output_1d.json [-o output_1d.xlsx] [--run ...]
+```
+
+Hojas (equivalencia con `excel_1d.py`): `Metadata`, `Runs`, `Zones`,
+`Regions`, `Boundaries`, `Scalar Flux`, `Angular Flux`, `Directions`,
+`k_history`. Formatos de número y encabezados con estilo.
+
+### `nts-rs plot`
+
+```text
+nts-rs plot -r output_1d.json --kind scalar|angular|k-history|scs \
+            [--run 0|name|all] [--zone-names] [-o out.png] [--show]
+nts-rs plot -i datos.json --kind scs [--x SCS|NU_SIGF|k_eff]
+```
+
+- `scalar`: φ(x) con centros de celda y regiones sombreadas.
+- `angular`: ψ(x) por dirección (un solo run; `--run all` inválido).
+- `k-history`: `k_history` por iteración exterior.
+- `scs`: φ en posiciones vs `SCS`/`NU_SIGF`/`k_eff` desde `datos.json`.
+- Nombres de zona desde `ZONE_NAMES` cuando existen.
+- Salida por defecto `outputs/results/plots/<kind>.png`; `--show` solo si hay
+  display (en su defecto, error claro o advertencia).
+
+### Tests
+
+- `tests/extract.rs`: configuración embebida, fallback a inputs, posiciones
+  fuera de rango, filas y claves exactas.
+- `tests/normalize.rs`: potencia resultante 10 kW, reconstrucción de malla,
+  `SIGMA_F` vs `NU`, selección de runs, errores.
+- `tests/excel.rs`: el archivo se crea, se puede leer con `calamine` y contiene
+  las hojas y el número de filas esperado.
+- `tests/plot.rs`: PNG con firma válida y tamaño > 0 para cada `kind`.
+- CLI: rutas por defecto, `--latest`, `--run` inválido.
+
+### Criterios de aceptación
+
+- `data` produce un `datos.json` que el `plot --kind scs` consume.
+- `normalize` deja `power_w = target` y escala ambos flujos.
+- Excel y PNG se generan sin dependencias de sistema.
+
+### Esfuerzo: M/L.
+
+---
+
+## Paso 4 — Workflow 2D: input.txt y binarios C
+
+**Objetivo:** portar `core/config.py`, `core/validator.py`,
+`core/input_builder.py`, `execution/runner.py` y `execution/parallel.py`.
+
+**Prerrequisitos:** paso 1 (CLI, paths, logging).
+
+### Módulos
+
+```text
+src/
+  two_d/
+    config.rs        # SimulationConfig + validación
+    input_builder.rs # input_###.txt
+    execution.rs     # subprocess de un binario C
+    parallel.rs      # pool de ejecución
+    results.rs       # parseo de output_###.json (MFLUX)
+  cli/generate.rs
+  cli/run2d.rs
+  cli/plot2d.rs
+```
+
+### `SimulationConfig`
+
+Campos y reglas equivalentes a Pydantic:
+
+| Campo | Tipo | Regla |
+|-------|------|-------|
+| `N` | int | par, > 0 |
+| `NZ` | int | > 0 |
+| `zones` | lista | longitud `NZ`; `sigma_t > 0`; `0 ≤ sigma_s < sigma_t` |
+| `NR_X`, `NR_Y` | int | > 0 |
+| `XDOM`, `YDOM` | lista | longitud `NR_X`/`NR_Y`; `length > 0`, `nodes > 0` |
+| `ZMAP` | matriz | `NR_Y × NR_X`; valores en `1..=NZ` |
+| `QMAP` | matriz | `NR_Y × NR_X`; valores ≥ 0 |
+| `BC` | [f64;4] | cada valor 0.0 o 1.0 |
+| `TOL` | f64 | `1e-7 ≤ TOL ≤ 1e-2` |
+
+Claves que empiezan con `_` se ignoran. Resumen imprimible para `validate`.
+
+### `InputBuilder`
+
+Orden exacto de líneas del formato `input.txt`:
+
+1. `N`
+2. `NZ`
+3. `NZ` líneas `sigma_t sigma_s`
+4. `NR_X`
+5. `NR_X` líneas `length nodes`
+6. `NR_Y`
+7. `NR_Y` líneas `length nodes`
+8. `NR_Y` filas de `ZMAP`
+9. `NR_Y` filas de `QMAP`
+10. `BC` en una línea (`left right bottom top`)
+11. `TOL`
+
+Funciones: `build() -> String`, `preview(max_lines)`, `save(path)` con
+creación de directorios y numeración `outputs/inputs/input_###.txt`.
+
+### Ejecución
+
+- `run_solver(exe, input, output, timeout)`:
+  - resuelve el binario con `NTS_SOLVERS_DIR` (o ruta absoluta),
+  - verifica que input existe,
+  - ejecuta `NTS_XX input.txt` con stdout redirigido a `output_###.json`,
+  - captura stderr, mide duración, devuelve `SolverResult { success, exit_code,
+    duration, stderr, error }`.
+- `run_parallel(tasks, nproc, timeout)`:
+  - pool de hilos (rayon o `std::thread::scope` + canal),
+  - resumen: total, éxitos, fallos, duración media,
+  - sin estado compartido mutable.
+- Comandos:
+  - `nts-rs generate <config.json> [-p|--preview] [-o PATH]`
+  - `nts-rs run2d -s NTS_DD -i input_001.txt ... -p 4`
+  - `nts-rs list outputs` reconoce ambos formatos.
+  - `nts-rs show` detecta 2D y muestra `STATUS/ITER/CPU`.
+  - `nts-rs plot2d -r output_###.json` → heatmap de `MFLUX`.
+
+### Tests
+
+- `tests/two_d_config.rs`: todas las reglas de validación y matriz de errores.
+- `tests/input_builder.rs`: golden file comparado línea a línea con
+  `solvers/doc_solvers/NTS_DD_EXAMPLE_INPUT.json` (y los otros 4 ejemplos) →
+  `input_###.txt` esperado.
+- `tests/two_d_run.rs`: binario falso (script que copia un JSON fijo) →
+  `SolverResult` correcto, timeout, código de salida distinto de 0.
+- `tests/two_d_parallel.rs`: 8 tareas con un falso solver, `nproc=4`, conteo
+  de éxitos/fallos y orden de resultados.
+- `status` reporta binarios ausentes sin fallar.
+
+### Criterios de aceptación
+
+- `generate` produce archivos idénticos (salvo numeración) a los del repo
+  Python para los 5 `NTS_*_EXAMPLE_INPUT.json`.
+- `run2d` ejecuta los binarios reales del repo Python y deja
+  `output_###.json` válidos.
+- El pool no lanza más de `nproc` procesos a la vez.
+
+### Esfuerzo: M/L.
+
+---
+
+## Paso 5 — TUI
+
+**Objetivo:** portar `tui/` (Textual) a `ratatui` + `crossterm`.
+
+**Prerrequisitos:** pasos 0–3 (config, runs, results, plots, sweeps, export).
+
+### Módulos
+
+```text
+src/
+  tui/
+    app.rs            # estado global, bucle de eventos
+    schema.rs         # campos/validación del editor
+    models.rs         # configuración en edición
+    services/
+      paths.rs        # lectura/escritura en NTS_HOME
+      config_store.rs # guardar/cargar config_1d_###.json
+      runner.rs       # lanzar/cancelar runs, log en vivo
+      results.rs      # leer output_1d_###.json
+      plots.rs        # invocar plot
+      sweeps.rs       # placeholders y preview
+      export.rs       # datos.json / Excel
+    screens/
+      config.rs, run.rs, results.rs, plots.rs,
+      placeholders.rs, export.rs
+    widgets/
+      region_table.rs, zone_table.rs, fission_table.rs,
+      geometry_bar.rs, log_pane.rs, image_preview.rs
+```
+
+### Funcionalidad
+
+- **Config**: geometría, zonas, materiales, fisión condicional, fronteras;
+  tablas editables; barra de geometría proporcional; placeholders en campos
+  numéricos.
+- **Guardar**: `outputs/inputs/config_1d_###.json`.
+- **Run**: uno o varios configs, override de esquema, log en vivo,
+  cancelación, escritura de output y Excel opcional.
+- **Results**: `k_eff`, `k_balance`, iteraciones, convergencia, potencia.
+- **Plots**: scalar/angular/k-history/SCS; preview inline opcional con
+  `ratatui-image` (feature `images`).
+- **Placeholders**: rangos tipo `MM [10:20:1]`, preview, guardar JSON, batch.
+- **Export**: `datos.json`, Excel y plots SCS.
+- Atajos: `q` salir, `Tab`/flechas navegar, `Enter` editar, `r` run,
+  `s` guardar, `Ctrl+C` cancelar.
+
+### Tests
+
+- `tests/tui_app.rs` con `ratatui::backend::TestBackend`: arranque, cambio de
+  pestaña, edición de celda, guardado (temp `NTS_HOME`).
+- `tests/tui_services.rs`: `paths`, `config_store` (numeración), `results`
+  (parseo), `sweeps` (expansión), `export` (archivos).
+- Golden/snapshot del buffer de las pantallas principales.
+
+### Criterios de aceptación
+
+- Un ciclo completo (config → save → run → results → plot) sin salir de la TUI.
+- La TUI no bloquea ni corrompe la terminal al cancelar.
+- Funciona sin feature `images`; el preview es opcional.
+
+### Esfuerzo: L.
+
+---
+
+## Paso 6 — Datasets PINN, empaquetado y CI
+
+**Objetivo:** cerrar el ciclo hacia el entrenamiento PINN y dejar el proyecto
+listo para distribución.
+
+**Prerrequisitos:** pasos 2–4.
+
+### Dataset
+
+```text
+nts-rs dataset --json base.json \
+               --place-holder kk 0.1 0.95 0.05 \
+               --place-holder mm 10 20 1 \
+               --positions 0 50 100 \
+               [-o outputs/datasets/dataset_###.json] \
+               [--format json|csv|parquet]
+```
+
+- Pipeline: `expand` → `run` → `data` (en memoria) → normalización opcional →
+  escritura.
+- Esquema por fila: parámetros (`SCS`, `NU_SIGF`), `mode`, `k_eff`,
+  `k_balance`, `flux_<pos>`, `spatial_scheme`, `N`, y metadatos del run.
+- Manifiesto reproducible: semilla/versión, comandos, contadores y hash de la
+  config base.
+- `--split train/val/test` opcional con proporciones y semilla.
+
+### Interoperabilidad con Python
+
+- Fase A (recomendada): frontera por archivos JSON/CSV; el código Python de
+  entrenamiento no cambia.
+- Fase B (opcional): bindings con `pyo3` (feature `python`) para llamar al
+  solver desde Python sin subprocess.
+
+### Empaquetado y CI
+
+- `Cargo.toml`: metadatos finales, `rust-version`, `keywords`, `categories`.
+- CI: `fmt`, `clippy --all-targets --all-features`, `test`, `doc`, build
+  `--release`; cache de `~/.cargo` y `target`.
+- Release: binarios Linux/macOS/Windows; el workflow de publicación valida
+  que `vX.Y.Z` coincide con `Cargo.toml`.
+- Licencia/MIT y `README` con instalación (`cargo install`, binarios).
+- `CHANGELOG.md` por paso.
+
+### Tests
+
+- `dataset` genera N filas = runs × posiciones, columnas completas.
+- Semilla fija → mismo split.
+- Formato CSV/Parquet legible (con `csv`/`parquet` dev-deps si se habilitan).
+- Pipeline completo con 2–3 configs en CI.
+
+### Criterios de aceptación
+
+- Un solo comando produce un dataset listo para entrenar.
+- CI verde en Linux/macOS/Windows (o matriz mínima Linux).
+- `cargo install --path .` deja `nts-rs` funcional.
+
+### Esfuerzo: M.
+
+---
+
+## Orden, dependencias y esfuerzo
+
+| Paso | Depende de | Esfuerzo | Riesgo principal |
+|------|------------|----------|------------------|
+| 0 | — | L (hecho) | paridad numérica |
+| 1 | 0 | S/M | logging sin ensuciar el core |
+| 2 | 1 | M | semántica zip/redondeo |
+| 3 | 0, 1 | M/L | plots sin display, Excel |
+| 4 | 1 | M/L | binarios externos, paralelismo |
+| 5 | 0–3 | L | alcance de la TUI |
+| 6 | 2–4 | M | formatos de dataset |
+
+Sugerencia de ejecución: **1 → 2 → 3 → 4 → 5 → 6**, con un commit por paso y
+un `CHANGELOG` por release. Cada paso debe terminar con tests, `fmt` y `clippy`
+limpios, y sin romper los 97 tests del paso 0.
 
 ## Riesgos y notas
 
 - **Paridad de iteraciones**: cualquier cambio en el orden reflectivo o en el
   momento de `iteration += 1` rompe `dd_pseudocode`. Es el test guardián.
-- **Tolerancias**: `inner_tol = max(epsilon, TOL_K)`; los valores de referencia
+- **Tolerancias**: `inner_tol = max(epsilon, TOL_K)`; los `k_eff` de referencia
   dependen de ello.
-- **`-c inputs.py`** no es portable; se documenta como limitación hasta el
-  paso 1/2.
-- **crates.io**: el crate `neutron-diffusion-dd` 0.1.0 ya está publicado; este
-  nombre se publicará como crate nuevo cuando se etiquete `vX.Y.Z`.
-- **Repositorio GitHub**: pendiente renombrar el remoto a
-  `neutron-transport-dd-rust` para que `git push` funcione.
+- **`.py` configs**: no se ejecutan; toda entrada es JSON. Documentar el
+  reemplazo en `--help` y en el README.
+- **Binarios 2D**: no se compilan desde Rust; se resuelven por
+  `NTS_SOLVERS_DIR`. `status` debe avisar sin fallar.
+- **Plots sin display**: `--show` no es portable; por defecto solo se escribe
+  el archivo.
+- **crates.io**: `neutron-diffusion-dd` 0.1.0 ya está publicado; este nombre
+  será un crate nuevo al etiquetar `vX.Y.Z`.
+- **GitHub**: pendiente renombrar el remoto a `neutron-transport-dd-rust`.
+- **Rendimiento**: los `Runner` por run son independientes; el paralelismo de
+  sweeps 1D puede hacerse con `rayon` sobre configs, pero no dentro de un mismo
+  barrido (dependencia secuencial). Medir antes de introducirlo.
