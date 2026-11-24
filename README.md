@@ -6,11 +6,12 @@ It solves the one-dimensional transport equation with Diamond Difference,
 Step and Step Characteristic spatial schemes, including reflective boundaries
 and multiplicative media (fission, `k_eff`, power iteration).
 
-This repository implements **steps 0–2** of the rewrite: the solver core, the
+This repository implements **steps 0–3** of the rewrite: the solver core, the
 configuration layer, the runner, the `run`/`validate`/`list`/`show`/`status`
-commands, logging, and the configuration generator with placeholder sweeps
-(`config`, `expand`). Post-processing, the 2D workflow, the TUI and the PINN
-integration are ported in later steps.
+commands, logging, the configuration generator with placeholder sweeps
+(`config`, `expand`) and the post-processing tools (`data`, `normalize`,
+`excel`, `plot`). The 2D workflow, the TUI and the PINN integration are ported
+in later steps.
 
 ## Features
 
@@ -26,6 +27,8 @@ integration are ported in later steps.
   `--json`.
 - **Parameter sweeps**: `config` writes a template with `kk`/`mm`
   placeholders; `expand` turns ranges into a list of validated configs.
+- **Post-processing**: `data` (`datos.json`), `normalize` (target power),
+  `excel` (9-sheet workbook) and `plot` (PNG: scalar, angular, k-history, sweeps).
 - **Structured logging**: daily global log plus one log per run.
 - **Interactive wizard** (`--manual`) with the same question order and
   defaults as the Python CLI.
@@ -137,6 +140,40 @@ Every command writes:
 
 The console level is `warn` by default; `-v` switches to `debug`, `-vv` to
 `trace`, and `-q` to `error`. `--log-level` overrides both.
+
+### Post-processing
+
+```bash
+# Scalar fluxes at cell positions -> outputs/results/datos.json
+nts-rs data --latest --positions 0 50 100
+nts-rs data -r outputs/results/output_1d_001.json --positions 0 100
+
+# Scale an existing output to a target power
+nts-rs normalize outputs/results/output_1d_001.json --power-kw 10 \
+    [--nu 2.4] [--ef-mev 200] [--area-cm2 1] [--run 0]
+
+# Excel workbook (Metadata, Runs, Zones, Regions, Boundaries,
+# ScalarFlux, AngularFlux, Directions, k_history)
+nts-rs excel outputs/results/output_1d_001.json [-o book.xlsx]
+
+# PNG plots (1600x900 by default, --width/--height to override)
+nts-rs plot -r outputs/results/output_1d_001.json --kind scalar
+nts-rs plot -r outputs/results/output_1d_001.json --kind angular
+nts-rs plot -r outputs/results/output_1d_001.json --kind k-history
+nts-rs plot -i outputs/results/datos.json --kind scs --x SCS
+```
+
+- `--run` accepts a 0-based index, a `config_name`, or `all` (except
+  `angular`, which requires exactly one run).
+- `data` prefers the embedded configuration and falls back to `--inputs`
+  (object of name → config or a list).
+- `normalize` derives `Sigma_f` from `SIGMA_F` or `NU_SIGF/NU` (default 2.49),
+  scales scalar and angular fluxes, and writes `<stem>_normalized.json`.
+- `plot` shades material regions and labels them with `ZONE_NAMES`; `scs`
+  renders one panel per position. `--show` opens the file with the platform
+  viewer.
+- Plots use a bundled font (Liberation Sans, SIL OFL) and the bitmap backend,
+  so no system font discovery or graphics library is required.
 
 ## Library usage
 
@@ -258,15 +295,18 @@ src/
   wizard.rs       Interactive --manual configuration
   placeholder.rs  Detection, replacement, grids and rounding
   logging.rs      fern console + daily file + per-run logs
-  cli/            run, config, expand, validate, list, show, status
+  post/           model, geometry, data, normalize, excel, plot
+  cli/            run, config, expand, data, normalize, excel, plot,
+                  validate, list, show, status
   main.rs         Entry point (delegates to cli::main)
+assets/fonts/     Liberation Sans + license (bundled plot font)
 tests/            Pseudocode equivalence, fission modes, schemes, CLI, ...
 ```
 
 ## Testing
 
 ```bash
-cargo test          # 140 tests
+cargo test          # 174 tests
 cargo clippy --all-targets --all-features
 cargo fmt --all -- --check
 ```
@@ -277,9 +317,8 @@ See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
 The full rewrite plan lives in [doc/PLAN.md](doc/PLAN.md).
 
-1. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
-2. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
-3. TUI and PINN integration.
+1. 2D workflow (`SimulationConfig`, `input.txt` builder, parallel C binaries).
+2. TUI and PINN integration.
 
 Python `.py` configuration modules (`-c inputs.py`) are not supported; use JSON
 with `config`/`expand`.
@@ -292,4 +331,5 @@ with `config`/`expand`.
 
 ## License
 
-MIT.
+MIT. The bundled plot font is Liberation Sans, licensed under the SIL Open
+Font License (see `assets/fonts/LICENSE-Liberation.txt`).

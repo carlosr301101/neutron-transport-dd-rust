@@ -1,9 +1,9 @@
 # Test suite - Neutron Transport DD
 
-140 tests (44 unit, 95 integration, 1 doc-test) covering configuration,
+174 tests (52 unit, 121 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
-wizard, the CLI inspection commands, logging, placeholder expansion and the
-output format.
+wizard, the CLI inspection commands, logging, placeholder expansion,
+post-processing (data, normalize, Excel, plots) and the output format.
 
 Run everything with:
 
@@ -31,6 +31,9 @@ cargo fmt --all -- --check
 | `paths` | zero-padded output name |
 | `placeholder` | identifier detection, enum-key skipping, replacement, unresolved checks, inclusive/clipped grids, decimal places, rounding |
 | `logging` | run-name sanitisation |
+| `post::model` | run selectors (index/name/all), list and scalar access |
+| `post::geometry` | centres/edges from NC/HR/IZL, invalid meshes, index fallback |
+| `post::normalize` | scaling of scalar/angular fluxes, missing fission data |
 | `cli` | object/list splitting, 2D detection, verbosity resolution |
 | doc-test | README-style eigenvalue example |
 
@@ -140,6 +143,42 @@ numeric fields, JSON-serializable summary.
 - `.py` output and missing placeholders rejected,
 - invalid step (`0`) reported,
 - expanded list runs end to end.
+
+### `data_cli.rs` - scalar-flux extraction
+
+- reference `datos.json` schema with `positions`, `spatial_schemes` and rows,
+- flux values match `scalar_flux[position]`,
+- `--latest` picks the last `output_1d_*.json`,
+- out-of-range positions are reported and produce no row,
+- fallback `--inputs` when the configuration is not embedded,
+- positional and `-r` forms agree; custom output path; missing source errors.
+
+### `normalize_cli.rs` - target power
+
+- scalar and angular fluxes scaled by `C_N`, `power_w = target`,
+- default `NU = 2.49` and `--nu` override,
+- `SIGMA_F` takes precedence over `NU_SIGF`,
+- run selection reduces `runs`/`total`,
+- runs without fission cannot be normalized (exit 1),
+- unknown run and broken mesh errors; non-positive power rejected by clap.
+
+### `excel_cli.rs` - workbook
+
+- nine sheets with the reference names and row counts,
+- scalar-flux values round-trip,
+- run selection limits the workbook,
+- custom output path and unknown run error.
+
+### `plot_cli.rs` - PNG plots
+
+- scalar plot honours `--width/--height`,
+- scalar, angular and k-history render 1600x900 PNGs (signature + IHDR),
+- `scs` renders from `datos.json`,
+- overlay of selected runs and custom output,
+- angular requires exactly one run,
+- fixed-source runs have no k-history,
+- `scs` requires `-i`, invalid `--x` and `--x` outside `scs` are rejected,
+- `--zone-names` accepted.
 
 ### `output_json.rs` - end-to-end CLI
 

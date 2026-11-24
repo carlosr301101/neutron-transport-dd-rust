@@ -74,10 +74,10 @@ posteriores:
 | `nts-1d-config` | `nts-rs config` | hecho |
 | `nts run` (binarios 2D) | `nts-rs run2d` | paso 4 |
 | `nts run-1d` / `nts-1d-run*` | `nts-rs run` | hecho |
-| `nts-1d-data` | `nts-rs data` | paso 3 |
-| `nts-1d-normalize` | `nts-rs normalize` | paso 3 |
-| `nts-1d-excel` | `nts-rs excel` | paso 3 |
-| `nts-1d-plot` | `nts-rs plot` | paso 3 |
+| `nts-1d-data` | `nts-rs data` | hecho |
+| `nts-1d-normalize` | `nts-rs normalize` | hecho |
+| `nts-1d-excel` | `nts-rs excel` | hecho |
+| `nts-1d-plot` | `nts-rs plot` | hecho |
 | `nts plot` (heatmap 2D) | `nts-rs plot2d` | paso 4 |
 | `nts list` / `nts show` | `nts-rs list` / `nts-rs show` | hecho (1D; 2D en 4) |
 | `python -m cli.run_tests` | `cargo test` | hecho |
@@ -343,105 +343,116 @@ lista expandida ejecutada de punta a punta.
 
 ---
 
-## Paso 3 — Post-proceso: data, normalize, Excel y plots
+## Paso 3 — Post-proceso: data, normalize, Excel y plots (completado)
 
 **Objetivo:** cubrir `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel` y
 `nts-1d-plot`.
 
-**Prerrequisitos:** pasos 0 y 1 (paths).
+**Prerrequisitos:** pasos 0 y 1.
 
-### Módulos
+### Módulos implementados
 
 ```text
 src/
   post/
-    extract.rs   # datos.json
-    normalize.rs # potencia sobre un output existente
-    excel.rs     # workbook
-    plot.rs      # PNG/SVG con plotters
-  cli/data.rs
-  cli/normalize.rs
-  cli/excel.rs
-  cli/plot.rs
+    model.rs      # acceso a output_1d y selectores de runs
+    geometry.rs   # dx, centros de celda, bordes y zonas
+    extract.rs    # datos.json
+    normalize.rs  # potencia sobre un output existente
+    excel.rs      # workbook (rust_xlsxwriter)
+    plot.rs       # PNG (plotters)
+  cli/{data,normalize,excel,plot}.rs
+assets/fonts/LiberationSans-Regular.ttf (+ licencia OFL)
 ```
 
-Dependencias nuevas: `rust_xlsxwriter` (Excel), `plotters` (gráficas),
-`calamine` (solo dev, para leer el xlsx en tests).
+Dependencias: `plotters` (backend bitmap + `ab_glyph`, sin `font-kit`),
+`rust_xlsxwriter`; `calamine` solo en tests.
 
 ### `nts-rs data`
 
 ```text
-nts-rs data [-r output_1d.json | --latest] \
-            [--positions 0 50 100] \
-            [--inputs configs.json] \
-            [-o outputs/results/datos.json]
+nts-rs data [SOURCE] [-r FILE | --latest] [--positions 0 100 ...] \
+            [--inputs FILE] [-o outputs/results/datos.json]
 ```
 
-- Prefiere `run.configuration` embebida; si falta, busca por `config_name` en
-  `--inputs`.
-- Fila por run: `config_name`, `SCS` (zona 1), `flux_<pos>` para cada posición,
-  `NU_SIGF` (zona 1) si existe, `spatial_scheme`, `mode`, `k_eff`, `k_balance`.
-- Posición fuera de rango → error por run (no aborta el resto).
-- Payload: `{ "data": [...], "positions": [...], "source": "...", "generated_at": ... }`
-  (mismo esquema que Python).
+- Usa la `configuration` embebida o `--inputs` (objeto nombre→config o lista
+  con nombres `json_config_###`).
+- Fila por run: `config_name`, `SCS` (zona 1), `flux_<pos>`, `NU_SIGF`,
+  `spatial_scheme`, `mode`, `k_eff`, `k_balance`.
+- Posición fuera de rango: error de ese run, sin abortar el resto.
+- Payload: `{source, positions, spatial_schemes, data[, errors]}`.
+- Salida por defecto `outputs/results/datos.json`; posiciones por defecto
+  `0 100` (como Python).
 
 ### `nts-rs normalize`
 
 ```text
-nts-rs normalize output_1d.json --power-kw 10 \
-                 [--nu 2.4] [--e-f-mev 200] [--area-cm2 1] \
-                 [--run 0 | --run manual | --run all] \
-                 [-o output_1d_normalized.json]
+nts-rs normalize SOURCE --power-kw 10 [--ef-mev 200] [--area-cm2 1] \
+                        [--nu 2.4] [--run 0|NAME|all] [-o PATH]
 ```
 
 - Reconstruye `dx` desde `NC`/`HR` y `Σf` por celda desde `SIGMA_F` o
-  `NU_SIGF/NU` (con `NU` por defecto 2.49 y aviso).
-- Escala `scalar_flux` y `angular_flux` por `C_N = P_target / P_unnorm`.
-- Actualiza `power_unnormalized`, `power_scale` y `power_w`; conserva el resto.
-- Errores: malla inconsistente, integral nula, `E_F`/`AREA` no positivos.
+  `NU_SIGF/NU` (por defecto 2.49).
+- Escala `scalar_flux` y `angular_flux` por `C_N = P_target/P_unnorm`, actualiza
+  `power_unnormalized`, `power_scale` y `power_w`.
+- Escribe `<stem>_normalized.json` con `normalized_at`, `runs` seleccionados y
+  `total`; errores por run se reportan y, si ninguno se normaliza, exit 1.
+- `--ef-mev` acepta el alias `--e-f-mev`.
 
 ### `nts-rs excel`
 
 ```text
-nts-rs excel output_1d.json [-o output_1d.xlsx] [--run ...]
+nts-rs excel SOURCE [-o PATH] [--run ...]
 ```
 
-Hojas (equivalencia con `excel_1d.py`): `Metadata`, `Runs`, `Zones`,
-`Regions`, `Boundaries`, `Scalar Flux`, `Angular Flux`, `Directions`,
-`k_history`. Formatos de número y encabezados con estilo.
+Hojas idénticas a Python: `Metadata`, `Runs`, `Zones`, `Regions`,
+`Boundaries`, `ScalarFlux`, `AngularFlux`, `Directions`, `k_history`.
+Cabeceras con estilo, paneles congelados, autofiltro, anchos automáticos y
+formatos numéricos (`0.000000E+00` para flujos, `0.0000000000` para `k`).
+Salida por defecto `<stem>.xlsx`.
 
 ### `nts-rs plot`
 
 ```text
-nts-rs plot -r output_1d.json --kind scalar|angular|k-history|scs \
-            [--run 0|name|all] [--zone-names] [-o out.png] [--show]
+nts-rs plot -r OUTPUT --kind scalar|angular|k-history [--run ...] \
+            [--zone-names] [-o PATH] [--show] [--width W] [--height H]
 nts-rs plot -i datos.json --kind scs [--x SCS|NU_SIGF|k_eff]
 ```
 
-- `scalar`: φ(x) con centros de celda y regiones sombreadas.
-- `angular`: ψ(x) por dirección (un solo run; `--run all` inválido).
-- `k-history`: `k_history` por iteración exterior.
-- `scs`: φ en posiciones vs `SCS`/`NU_SIGF`/`k_eff` desde `datos.json`.
-- Nombres de zona desde `ZONE_NAMES` cuando existen.
-- Salida por defecto `outputs/results/plots/<kind>.png`; `--show` solo si hay
-  display (en su defecto, error claro o advertencia).
+- **backend**: `plotters` `BitMapBackend`, PNG RGB 1600×900 por defecto.
+- **fuente**: Liberation Sans embebida y registrada con `ab_glyph`; sin
+  `font-kit`, freetype ni fontconfig del sistema.
+- `scalar`: φ(x), regiones sombreadas, separadores, etiquetas de `ZONE_NAMES`,
+  varias series con leyenda; eje y desde 0 con 18 % de margen superior.
+- `angular`: un solo run, una línea por dirección con gradiente azul→rojo y
+  leyenda `μ=…`.
+- `k-history`: línea + puntos, línea horizontal y anotación del `k_eff` final;
+  error claro si el run es `fixed_source`.
+- `scs`: un panel por posición (hasta 3 columnas) desde `datos.json`.
+- `--run` acepta índice, nombre o `all` (no en `angular`).
+- `--show` abre el PNG con `xdg-open`/`open`/`cmd start`; si falla, avisa.
+- Salida por defecto `outputs/results/plots/<kind>.png`.
 
-### Tests
+### Tests (25 nuevos, 174 totales)
 
-- `tests/extract.rs`: configuración embebida, fallback a inputs, posiciones
-  fuera de rango, filas y claves exactas.
-- `tests/normalize.rs`: potencia resultante 10 kW, reconstrucción de malla,
-  `SIGMA_F` vs `NU`, selección de runs, errores.
-- `tests/excel.rs`: el archivo se crea, se puede leer con `calamine` y contiene
-  las hojas y el número de filas esperado.
-- `tests/plot.rs`: PNG con firma válida y tamaño > 0 para cada `kind`.
-- CLI: rutas por defecto, `--latest`, `--run` inválido.
+- `tests/data_cli.rs` (7): esquema, valores, `--latest`, posiciones inválidas,
+  fallback `--inputs`, equivalencia posicional/`-r`, salida y errores.
+- `tests/normalize_cli.rs` (7): escalado de ambos flujos, `NU` por defecto y
+  override, `SIGMA_F` prioritario, selección de runs, sin fisión, malla rota,
+  potencia no positiva.
+- `tests/excel_cli.rs` (4): nueve hojas, valores que sobreviven al viaje,
+  selección de runs, salida y run inexistente.
+- `tests/plot_cli.rs` (7): tamaño, los cuatro tipos (firma PNG + IHDR),
+  superposición, `angular` con un run, `k-history` sin historia, validaciones
+  de `scs`/`--x`, `--zone-names`.
 
-### Criterios de aceptación
+### Criterios de aceptación (verificados)
 
-- `data` produce un `datos.json` que el `plot --kind scs` consume.
-- `normalize` deja `power_w = target` y escala ambos flujos.
-- Excel y PNG se generan sin dependencias de sistema.
+- [x] `data` produce `datos.json` y `plot --kind scs` lo consume.
+- [x] `normalize` deja `power_w = target` y escala ambos flujos.
+- [x] Excel y PNG se generan sin dependencias de sistema (fuente incluida).
+- [x] Salidas por defecto y `--run` compatibles con la referencia.
+- [x] Suite total: 174 tests; `fmt`, `clippy` y `cargo doc` limpios.
 
 ### Esfuerzo: M/L.
 
@@ -680,7 +691,7 @@ nts-rs dataset --json base.json \
 | 0 | — | L (hecho) | paridad numérica |
 | 1 | 0 | S/M (hecho) | logging sin ensuciar el core |
 | 2 | 1 | M (hecho) | semántica zip/redondeo |
-| 3 | 0, 1 | M/L | plots sin display, Excel |
+| 3 | 0, 1 | M/L (hecho) | plots sin display, Excel |
 | 4 | 1 | M/L | binarios externos, paralelismo |
 | 5 | 0–3 | L | alcance de la TUI |
 | 6 | 2–4 | M | formatos de dataset |
