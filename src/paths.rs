@@ -6,6 +6,10 @@
 
 use std::path::PathBuf;
 
+/// 2D solver binaries driven by the external workflow (step 4).
+pub const AVAILABLE_SOLVERS: [&str; 5] =
+    ["NTS_DD", "NTS_LD", "NTS_RM_CN", "NTS_RM_LLN", "NTS_STEP"];
+
 /// Root of the user work directory.
 pub fn work_root() -> PathBuf {
     match std::env::var_os("NTS_HOME") {

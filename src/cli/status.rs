@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::Args;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::paths;
 
@@ -41,7 +41,9 @@ pub(crate) fn execute(command: StatusCommand) -> Result<u8, String> {
         name_of(path).starts_with("output_1d_") && is_json(path)
     })?;
     let results_2d = count_files(&results, |path| {
-        name_of(path).starts_with("output_") && !name_of(path).starts_with("output_1d_") && is_json(path)
+        name_of(path).starts_with("output_")
+            && !name_of(path).starts_with("output_1d_")
+            && is_json(path)
     })?;
     let log_files = count_files(&logs, |_| true)?;
 
@@ -127,18 +129,12 @@ pub(crate) fn execute(command: StatusCommand) -> Result<u8, String> {
     Ok(0)
 }
 
-fn count_files(
-    directory: &Path,
-    predicate: impl Fn(&Path) -> bool,
-) -> Result<usize, String> {
+fn count_files(directory: &Path, predicate: impl Fn(&Path) -> bool) -> Result<usize, String> {
     let read = match std::fs::read_dir(directory) {
         Ok(read) => read,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => {
-            return Err(format!(
-                "failed to read {}: {error}",
-                directory.display()
-            ));
+            return Err(format!("failed to read {}: {error}", directory.display()));
         }
     };
 
@@ -162,6 +158,3 @@ fn name_of(path: &Path) -> &str {
 fn is_json(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("json")
 }
-
-#[allow(dead_code)]
-fn _unused(_: Value) {}
