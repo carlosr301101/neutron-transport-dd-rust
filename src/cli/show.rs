@@ -98,7 +98,11 @@ pub(crate) fn execute(command: ShowCommand) -> Result<u8, String> {
         let k_balance = run.get("k_balance").and_then(Value::as_f64);
         let power_w = run.get("power_w").and_then(Value::as_f64);
 
-        let status = if converged { "converged" } else { "not converged" };
+        let status = if converged {
+            "converged"
+        } else {
+            "not converged"
+        };
         let outer = outer.map_or_else(|| "-".to_string(), |value| value.to_string());
 
         println!(

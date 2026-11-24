@@ -5,6 +5,7 @@
 
 pub mod list;
 pub mod run;
+pub mod show;
 pub mod validate;
 
 use std::process::ExitCode;
@@ -111,6 +112,8 @@ pub enum Command {
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
     List(list::ListCommand),
+    /// Summarise a result file.
+    Show(show::ShowCommand),
 }
 
 /// Entry point used by `src/main.rs`.
@@ -128,6 +131,7 @@ pub fn main() -> ExitCode {
         Command::Run(command) => run::execute(command, verbose),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
+        Command::Show(command) => show::execute(command),
     };
 
     match outcome {
