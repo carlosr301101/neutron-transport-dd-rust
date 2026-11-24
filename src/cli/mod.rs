@@ -7,6 +7,7 @@ pub mod config;
 pub mod data;
 pub mod expand;
 pub mod list;
+pub mod normalize;
 pub mod run;
 pub mod show;
 pub mod status;
@@ -118,6 +119,8 @@ pub enum Command {
     Expand(expand::ExpandCommand),
     /// Extract scalar fluxes at positions into datos.json.
     Data(data::DataCommand),
+    /// Normalize an existing output to a target power.
+    Normalize(normalize::NormalizeCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -144,6 +147,7 @@ pub fn main() -> ExitCode {
         Command::Config(command) => config::execute(command),
         Command::Expand(command) => expand::execute(command),
         Command::Data(command) => data::execute(command),
+        Command::Normalize(command) => normalize::execute(command),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),
