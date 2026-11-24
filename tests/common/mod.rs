@@ -2,11 +2,51 @@
 
 #![allow(dead_code)]
 
+use std::path::Path;
+use std::process::{Command, Output, Stdio};
+
 use neutron_transport_dd::config::Config;
 use neutron_transport_dd::core::Runner;
 use neutron_transport_dd::result::RunResult;
 use neutron_transport_dd::scheme::Method;
 use serde_json::{Value, json};
+
+/// Path to the compiled `nts-rs` binary.
+pub fn binary() -> &'static str {
+    env!("CARGO_BIN_EXE_nts-rs")
+}
+
+/// Run the CLI with `NTS_HOME` pointing at `home`.
+pub fn cli(home: &Path, args: &[&str]) -> Output {
+    Command::new(binary())
+        .args(args)
+        .env("NTS_HOME", home)
+        .current_dir(home)
+        .output()
+        .expect("spawn nts-rs")
+}
+
+/// Run the CLI feeding `script` through stdin.
+pub fn cli_stdin(home: &Path, args: &[&str], script: &str) -> Output {
+    use std::io::Write;
+
+    let mut child = Command::new(binary())
+        .args(args)
+        .env("NTS_HOME", home)
+        .current_dir(home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nts-rs");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("write script");
+    child.wait_with_output().expect("wait")
+}
 
 /// Benchmark configuration used by the reference test-suite.
 pub fn base() -> Value {
