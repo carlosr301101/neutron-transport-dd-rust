@@ -6,15 +6,24 @@ authors = ["int_64 <carlosr301101@gmail.com>"]
 description = "A high-performance neutron transport solver using the S_N (Discrete Ordinates) method with domain decomposition. Solves the 1D neutron transport (Boltzmann) equation with automatic or manual configuration."
 license = "MIT"
 repository = "https://github.com/carlosr301101/neutron-transport-dd-rust"
-homepage = "https://github.com/carlosr301101/neutron-transport-dd-rust"
 documentation = "https://docs.rs/neutron-transport-dd"
 keywords = ["neutron", "transport", "boltzmann", "s_n", "domain-decomposition"]
 categories = ["science", "simulation", "mathematics"]
 readme = "README.md"
 
+[lib]
+name = "neutron_transport_dd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nts-rs"
+path = "src/main.rs"
+
 [dependencies]
-nalgebra = "0.34.1"
-once_cell = "1.21.3"
+clap = { version = "4.4", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
-clap = { version = "4.4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

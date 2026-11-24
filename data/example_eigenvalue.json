@@ -1,0 +1,20 @@
+{
+    "num_regions": 1,
+    "num_zones": 1,
+    "NC": [100],
+    "HR": [20.0],
+    "IZL": [1],
+    "SCT": [1.0],
+    "SCS": [0.9],
+    "NU_SIGF": [0.11],
+    "Q": [0.0],
+    "N": 8,
+    "SPATIAL_SCHEME": "DD",
+    "reflex_izq": false,
+    "reflex_der": false,
+    "bound_left": [0, 0, 0, 0],
+    "bound_right": [0, 0, 0, 0],
+    "MODE": "eigenvalue",
+    "TOL_K": 1e-6,
+    "MAX_OUTER": 200
+}

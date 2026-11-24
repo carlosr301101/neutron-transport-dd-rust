@@ -1,0 +1,18 @@
+{
+    "num_regions": 1,
+    "num_zones": 1,
+    "NC": [20],
+    "HR": [20.0],
+    "IZL": [1],
+    "SCT": [1.0],
+    "SCS": [0.9],
+    "NU_SIGF": [0.05],
+    "Q": [1.0],
+    "N": 8,
+    "SPATIAL_SCHEME": "DD",
+    "reflex_izq": true,
+    "reflex_der": true,
+    "bound_left": [0, 0, 0, 0],
+    "bound_right": [0, 0, 0, 0],
+    "MODE": "driven"
+}
