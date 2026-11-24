@@ -78,10 +78,8 @@ fn png_size(path: &Path) -> (u32, u32) {
 
 #[test]
 fn placeholder_screen_renders_and_adds_ranges() {
-    let mut app = App {
-        tab: Tab::Placeholders,
-        ..App::default()
-    };
+    let mut app = App::default();
+    app.switch_tab(Tab::Placeholders);
     app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
     assert_eq!(app.sweeps.ranges.len(), 1);
     assert_eq!(app.sweeps.ranges[0].name, "kk");
