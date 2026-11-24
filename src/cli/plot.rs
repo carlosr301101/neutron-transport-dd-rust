@@ -59,7 +59,7 @@ pub struct PlotCommand {
     #[arg(long)]
     zone_names: bool,
 
-    /// Output PNG (default: outputs/results/plots/<kind>.png).
+    /// Output PNG (default: `outputs/results/plots/<kind>.png`).
     #[arg(short, long, value_name = "PATH")]
     output: Option<PathBuf>,
 

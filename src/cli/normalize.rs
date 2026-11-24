@@ -16,7 +16,7 @@ pub struct NormalizeCommand {
     /// Consolidated output (`output_1d_###.json`).
     source: PathBuf,
 
-    /// Output JSON (default: <stem>_normalized.json).
+    /// Output JSON (default: `<stem>_normalized.json`).
     #[arg(short, long, value_name = "PATH")]
     output: Option<PathBuf>,
 
