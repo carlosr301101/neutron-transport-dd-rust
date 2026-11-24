@@ -1,6 +1,6 @@
-// Tests de integración para neutron-diffusion-dd
+// Tests de integración para neutron-transport-dd
 
-use neutron_diffusion_dd::algorithm::{Config, Runner};
+use neutron_transport_dd::algorithm::{Config, Runner};
 use std::fs;
 use std::path::Path;
 

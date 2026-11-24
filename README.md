@@ -1,4 +1,4 @@
-# Neutron Diffusion with Domain Decomposition
+# Neutron Transport with Domain Decomposition
 
 A high-performance Rust library for solving one-dimensional neutron transport problems using the Discrete Ordinates (S_N) method with domain decomposition techniques.
 
@@ -23,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-neutron-diffusion-dd = "0.1"
+neutron-transport-dd = "0.1"
 ```
 
 ## Quick Start
@@ -47,7 +47,7 @@ The program will prompt you interactively for all configuration parameters.
 ### Using as a Library
 
 ```rust
-use neutron_diffusion_dd::algorithm::{Config, Runner};
+use neutron_transport_dd::algorithm::{Config, Runner};
 
 // Load configuration from JSON
 let config = Config::new_auto(1e-5, 2000, "data/input.json")?;
@@ -127,7 +127,7 @@ Results are saved to a timestamped output file (e.g., `data_1765423402.out`) con
 ### Example 1: Simple 1D Problem
 
 ```rust
-use neutron_diffusion_dd::algorithm::{Config, Runner};
+use neutron_transport_dd::algorithm::{Config, Runner};
 
 fn main() {
     let config = Config::new_auto(1e-5, 500, "data/input.json")

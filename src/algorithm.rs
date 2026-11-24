@@ -157,7 +157,7 @@ impl Config {
     /// # Example
     ///
     /// ```no_run
-    /// use neutron_diffusion_dd::algorithm::Config;
+    /// use neutron_transport_dd::algorithm::Config;
     ///
     /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
     /// ```
@@ -295,7 +295,7 @@ impl Config {
     /// # Example
     ///
     /// ```no_run
-    /// use neutron_diffusion_dd::algorithm::Config;
+    /// use neutron_transport_dd::algorithm::Config;
     ///
     /// let config = Config::new_manual(1e-5, 2000);
     /// ```
@@ -663,7 +663,7 @@ impl Config {
 /// # Example
 ///
 /// ```no_run
-/// use neutron_diffusion_dd::algorithm::{Config, Runner};
+/// use neutron_transport_dd::algorithm::{Config, Runner};
 ///
 /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
 /// let mut runner = Runner::new(config);
@@ -702,7 +702,7 @@ impl Runner {
     /// # Example
     ///
     /// ```no_run
-    /// use neutron_diffusion_dd::algorithm::{Config, Runner};
+    /// use neutron_transport_dd::algorithm::{Config, Runner};
     ///
     /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
     /// let runner = Runner::new(config);
@@ -886,7 +886,7 @@ impl Runner {
     /// # Example
     ///
     /// ```no_run
-    /// use neutron_diffusion_dd::algorithm::{Config, Runner};
+    /// use neutron_transport_dd::algorithm::{Config, Runner};
     ///
     /// let config = Config::new_auto(1e-5, 2000, "data/input.json");
     /// let mut runner = Runner::new(config);

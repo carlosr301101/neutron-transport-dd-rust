@@ -8,8 +8,8 @@ extern crate nalgebra;
 extern crate once_cell;
 
 #[derive(Parser, Debug)]
-#[command(name = "neutron-diffusion-dd")]
-#[command(about = "Simulador de difusión de neutrones S_N", long_about = None)]
+#[command(name = "neutron-transport-dd")]
+#[command(about = "Simulador de transporte de neutrones S_N", long_about = None)]
 struct Args {
     /// Ruta al archivo input.json para modo automático
     #[arg(short, long, value_name = "FILE")]

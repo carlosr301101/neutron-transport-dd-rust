@@ -1,14 +1,14 @@
 [package]
-name = "neutron-diffusion-dd"
+name = "neutron-transport-dd"
 version = "0.1.0"
 edition = "2024"
 authors = ["int_64 <carlosr301101@gmail.com>"]
-description = "A high-performance neutron transport solver using the S_N (Discrete Ordinates) method with domain decomposition. Solves the 1D neutron diffusion equation with automatic or manual configuration."
+description = "A high-performance neutron transport solver using the S_N (Discrete Ordinates) method with domain decomposition. Solves the 1D neutron transport (Boltzmann) equation with automatic or manual configuration."
 license = "MIT"
-repository = "https://github.com/yourusername/neutron-diffusion-dd"
-homepage = "https://github.com/yourusername/neutron-diffusion-dd"
-documentation = "https://docs.rs/neutron-diffusion-dd"
-keywords = ["neutron", "transport", "diffusion", "s_n", "domain-decomposition"]
+repository = "https://github.com/carlosr301101/neutron-transport-dd-rust"
+homepage = "https://github.com/carlosr301101/neutron-transport-dd-rust"
+documentation = "https://docs.rs/neutron-transport-dd"
+keywords = ["neutron", "transport", "boltzmann", "s_n", "domain-decomposition"]
 categories = ["science", "simulation", "mathematics"]
 readme = "README.md"
 
