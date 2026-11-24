@@ -194,6 +194,8 @@ See [TESTS.md](TESTS.md) for the test inventory and reference values.
 
 ## Not ported yet (next steps)
 
+The full rewrite plan lives in [doc/PLAN.md](doc/PLAN.md).
+
 1. `validate`, `list`, `show`, `status`, logging to file.
 2. `nts-generate` placeholders (`kk`/`mm`) and `nts-1d-config`.
 3. `nts-1d-data`, `nts-1d-normalize`, `nts-1d-excel`, `nts-1d-plot`.
