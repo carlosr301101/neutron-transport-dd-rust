@@ -4,6 +4,7 @@
 //! subcommand lives in its own module and returns an exit code.
 
 pub mod config;
+pub mod data;
 pub mod expand;
 pub mod list;
 pub mod run;
@@ -115,6 +116,8 @@ pub enum Command {
     Config(config::ConfigCommand),
     /// Expand placeholders into a list of configurations.
     Expand(expand::ExpandCommand),
+    /// Extract scalar fluxes at positions into datos.json.
+    Data(data::DataCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -140,6 +143,7 @@ pub fn main() -> ExitCode {
         Command::Run(command) => run::execute(command, verbose),
         Command::Config(command) => config::execute(command),
         Command::Expand(command) => expand::execute(command),
+        Command::Data(command) => data::execute(command),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),
