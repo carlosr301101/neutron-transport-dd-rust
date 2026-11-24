@@ -9,6 +9,7 @@ pub mod excel;
 pub mod expand;
 pub mod list;
 pub mod normalize;
+pub mod plot;
 pub mod run;
 pub mod show;
 pub mod status;
@@ -124,6 +125,8 @@ pub enum Command {
     Normalize(normalize::NormalizeCommand),
     /// Export a consolidated output as an Excel workbook.
     Excel(excel::ExcelCommand),
+    /// Render scalar/angular flux, k history or sweep plots.
+    Plot(plot::PlotCommand),
     /// Validate one configuration or a list of them.
     Validate(validate::ValidateCommand),
     /// List generated inputs or results.
@@ -152,6 +155,7 @@ pub fn main() -> ExitCode {
         Command::Data(command) => data::execute(command),
         Command::Normalize(command) => normalize::execute(command),
         Command::Excel(command) => excel::execute(command),
+        Command::Plot(command) => plot::execute(command),
         Command::Validate(command) => validate::execute(command),
         Command::List(command) => list::execute(command),
         Command::Show(command) => show::execute(command),
