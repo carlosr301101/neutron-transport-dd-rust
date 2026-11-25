@@ -649,6 +649,9 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
 - Captura de ratón con `m` para poder copiar texto.
 - Guardado con diálogo de ruta editable (`s`), con default
   `outputs/inputs/config_1d_###.json`.
+- Panel Configs para cargar configuraciones guardadas (incluidas listas `#k`).
+- Placeholders: detección automática en la config seleccionada, rangos
+  precargados de igual longitud, salida editable y ejecución por lotes.
 - Cursor en todos los inputs (←/→, Home/End, Backspace/Delete), dibujado como
   cursor real del terminal (no separa números), editor de 22 columnas; panel
   de geometría con una sola referencia al largo y un color por zona material.

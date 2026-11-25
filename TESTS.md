@@ -1,6 +1,6 @@
 # Test suite - Neutron Transport DD
 
-251 tests (71 unit, 179 integration, 1 doc-test) covering configuration,
+260 tests (72 unit, 187 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
 post-processing (data, normalize, Excel, plots), cancellation, the TUI (config
@@ -213,6 +213,7 @@ numeric fields, JSON-serializable summary.
 - save writes a loadable configuration,
 - invalid configurations are not saved,
 - `s` opens the save-as dialog with the default path and `Esc` cancels,
+- the Configs panel and placeholder hint render; saved configs load (object and list item),
 - the edited path is saved and loads back; non-JSON paths are rejected,
 - the save dialog is 76 columns wide,
 - cursor editing: Home + insert in the middle, Left + Backspace, Home + Delete,
@@ -255,8 +256,11 @@ numeric fields, JSON-serializable summary.
 
 ### `tui_export.rs` - placeholders, plots and export (phase C)
 
-- placeholder screen adds ranges,
+- placeholder detection excludes zone names and preloads ranges,
+- strict parallel expansion with equal ranges; unequal ranges are rejected,
 - expansion writes `inputs_1d.json` with the reference grid,
+- the output dialog defaults to `outputs/inputs/inputs_1d.json`,
+- batch execution runs every generated config (`output_1d_###.json`),
 - plot screen generates PNGs (scalar, k-history; angular errors cleanly),
 - `datos.json` positions/values and Excel workbook,
 - SCS export,

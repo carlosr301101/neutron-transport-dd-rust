@@ -187,10 +187,10 @@ least 80×24; the terminal is restored on exit and on panic.
 
 | Screen | What it does | Keys |
 |--------|--------------|------|
-| **Config** | Editable form with collapsible sections and per-zone groups: regions, materials, boundaries, physics, power, `epsilon`/`max_iter` and `ZONE_NAMES`. Placeholders (`kk`, `mm`) are accepted in numeric fields. `IZL`, `N`, scheme and mode open a dropdown. | `↑/↓` move, `←/→` fold/cycle, `Enter` open/toggle, `e` edit as text, `z`/`Z` collapse all, `s` save as (editable path), `v` validate |
-| **Run** | Lists `outputs/inputs`, runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
+| **Config** | Editable form plus the **Configs** panel with saved configurations (list items appear as `file.json #1`, `#2`, …). Placeholders (`kk`, `mm`) are accepted in numeric fields and flagged as templates. `IZL`, `N`, scheme and mode open a dropdown. | `L` browse saved configs, `Enter` load, `↑/↓` move, `←/→` fold/cycle, `e` edit, `z`/`Z` collapse, `s` save as, `v` validate |
+| **Run** | Lists `outputs/inputs`; files that contain a list are split into one entry per configuration. Runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
 | **Results** | Output list and a runs table (`mode`, scheme, convergence, iterations, `k_eff`, `k_balance`). | `↑/↓` select |
-| **Placeholders** | Range editor (`name`, `start`, `end`, `step`) and expansion over the selected config. | `a` add, `d` delete, `←/→` column, `Enter` edit, `x` expand |
+| **Placeholders** | Selects a source config, **auto-detects** its placeholders, preloads equal ranges and expands/saves or runs the batch. | `[`/`]` change config, `↑/↓` row, `←/→` column, `Enter` edit, `x` save (path dialog), `R` run batch, `r` rescan |
 | **Plots** | Generates scalar, angular, k-history or SCS plots for the selected output. | `k`/`←/→` kind, `g` generate, `o` open |
 | **Export** | `datos.json`, Excel workbook and SCS plot. | `d`, `x`, `s`, `o` open |
 
@@ -228,6 +228,33 @@ terminal cursor, so it never inserts a gap between digits. The Geometry panel sh
 proportional bar with a single length reference; each region segment is
 coloured by its material zone (`IZL`), so different zones are visually
 distinguishable.
+
+### Saved configurations
+
+The **Configs** panel (bottom right of the Config screen) lists every JSON file
+in `outputs/inputs`. A file containing a list (an expansion output) is shown as
+one row per element (`inputs_1d.json #1`, `#2`, …). `L` focuses the panel,
+`↑/↓` selects and `Enter` (or a click) loads the configuration into the form;
+placeholders are kept as text and shown as a template.
+
+### Placeholders and batch runs
+
+The Placeholders screen always works on the configuration selected at the top
+(`[`/`]` cycles through the saved configurations). On entry it:
+
+1. detects every non-numeric value in numeric fields (`kk`, `mm`, …), ignoring
+   `ZONE_NAMES`, `MODE` and `SPATIAL_SCHEME`;
+2. creates one editable range (`start`, `end`, `step`) per placeholder, with
+   `0.1 / 0.5 / 0.1` preloaded;
+3. shows the number of values of each range and refuses to expand unless all
+   ranges produce the **same** number of values (parallel zip, no silent
+   truncation).
+
+`x` opens the **Expansion output** dialog (default
+`outputs/inputs/inputs_1d.json`, editable) and writes the list; `R` additionally
+runs every generated configuration from the TUI into a consolidated
+`output_1d_###.json`. Running a template directly from Run reports that it must
+be expanded first.
 
 Optional inline plot preview (sixel/kitty/halfblocks):
 
