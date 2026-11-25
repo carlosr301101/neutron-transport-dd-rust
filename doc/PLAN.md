@@ -712,8 +712,9 @@ nts-rs dataset --json base.json \
 - `Cargo.toml`: `rust-version = "1.88"`, `include` explícito (código, fuentes,
   ejemplos, tests y docs), `[profile.release]` con `lto = "thin"`,
   `codegen-units = 1` y `strip = true`.
-- `LICENSE` MIT y `CHANGELOG.md` con la 0.2.0 (`v0.1.0` ya existía como tag
-de la etapa Python).
+- `LICENSE` MIT y `CHANGELOG.md` con la 0.3.0 (`v0.1.0` es el tag de la etapa
+Python y `v0.2.0` quedó sin publicar porque el CI de Windows falló antes del
+`cargo publish`).
 - `README` con badges, instalación desde crates.io (`cargo install
   neutron-transport-dd`, variante `--features images`), binarios precompilados,
   build desde fuente y MSRV.
@@ -725,6 +726,7 @@ de la etapa Python).
   de versión con `cargo metadata` + `jq` → `cargo publish --locked`.
 - Release (`.github/workflows/release.yml`): binarios
   `x86_64-unknown-linux-gnu` y `x86_64-pc-windows-msvc` con
+  `taiki-e/create-gh-release-action` (crea la release) y
   `taiki-e/upload-rust-binary-action`. Se elimina `linux_distro.yml`.
 - Verificado en local: `fmt`, `clippy --all-features -D warnings`, 265 tests,
   `doc -D warnings`, `cargo package --list` (78 ficheros) y

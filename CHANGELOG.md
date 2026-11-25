@@ -2,11 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.2.0] - 2026-11-25
+## [0.3.0] - 2026-11-25
 
-First public release of the Rust rewrite. `v0.1.0` was already taken by the
-earlier Python-era tag, so the crate starts at 0.2.0 to keep the tag, the
-GitHub release and the crates.io version in sync.
+First published release. `v0.2.0` was tagged, but the release never completed:
+the Windows CI job compared recorded output paths as strings (backslashes vs
+forward slashes) and failed, so `cargo publish` was skipped and the binary
+upload found no GitHub Release. `0.3.0` fixes both problems.
+
+### Fixed
+
+- Tests compare `datos.json` sources as `Path`s (component-wise) instead of
+  strings, and normalise separators in the TUI path assertions, so the suite
+  passes on Windows.
+- The release workflow creates the GitHub Release for the tag before uploading
+  the Linux and Windows archives.
 
 ### Added
 
@@ -30,5 +39,6 @@ GitHub release and the crates.io version in sync.
 
 ### Notes
 
-- `v0.1.0` corresponds to the previous Python implementation; this crate starts
-  at 0.2.0 so the git tag, the GitHub release and the crates.io version match.
+- `v0.1.0` corresponds to the previous Python implementation.
+- `v0.2.0` is skipped on crates.io: the tag exists, but CI failed before the
+  publish job and the crate was never uploaded.
