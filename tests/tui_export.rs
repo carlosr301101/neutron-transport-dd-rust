@@ -8,10 +8,13 @@ use std::time::{Duration, Instant};
 
 use common::cli;
 use neutron_transport_dd::sweep::SweepRange;
-use neutron_transport_dd::tui::app::{App, Tab};
+use neutron_transport_dd::tui::app::{Action, App, Tab};
 use neutron_transport_dd::tui::services::{config_store, results as results_service};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -340,4 +343,141 @@ fn batch_runs_every_expanded_configuration() {
     assert_eq!(payload["failures"], 0);
     assert_eq!(payload["runs"].as_array().unwrap().len(), 3);
     assert_eq!(payload["runs"][0]["config_name"], "json_config_001");
+}
+
+fn write_config(home: &Path, name: &str, scs: Value) {
+    fs::write(
+        home.join(name),
+        serde_json::to_string_pretty(&json!({
+            "num_regions": 1, "num_zones": 1,
+            "NC": [10], "HR": [10.0], "IZL": [1],
+            "SCT": [1.0], "SCS": scs, "NU_SIGF": [0.0],
+            "Q": [1.0], "N": 2, "MODE": "fixed_source",
+            "bound_left": [0], "bound_right": [0]
+        }))
+        .unwrap(),
+    )
+    .expect("write");
+}
+
+#[test]
+fn placeholder_list_filters_and_includes_list_items() {
+    let home = TempDir::new().expect("temp");
+    write_config(home.path(), "config_a.json", json!(["kk"]));
+    write_config(home.path(), "config_b.json", json!([0.9]));
+    fs::write(
+        home.path().join("inputs_1d.json"),
+        serde_json::to_string(&json!([
+            {
+                "num_regions": 1, "num_zones": 1,
+                "NC": [10], "HR": [10.0], "IZL": [1],
+                "SCT": [1.0], "SCS": ["mm"], "NU_SIGF": [0.0],
+                "Q": [1.0], "N": 2, "MODE": "fixed_source",
+                "bound_left": [0], "bound_right": [0]
+            },
+            {
+                "num_regions": 1, "num_zones": 1,
+                "NC": [10], "HR": [10.0], "IZL": [1],
+                "SCT": [1.0], "SCS": [0.5], "NU_SIGF": [0.0],
+                "Q": [1.0], "N": 2, "MODE": "fixed_source",
+                "bound_left": [0], "bound_right": [0]
+            }
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.scan_placeholders();
+
+    assert_eq!(app.sweeps.placeholder_entries.len(), 2);
+    let labels: Vec<String> = app
+        .sweeps
+        .placeholder_entries
+        .iter()
+        .map(|index| app.saved[*index].label())
+        .collect();
+    assert!(labels.contains(&"config_a.json".to_string()));
+    assert!(labels.iter().any(|label| label.contains("#1")));
+    assert!(!labels.contains(&"config_b.json".to_string()));
+
+    let text = render(&mut app);
+    assert!(text.contains("Placeholder configs (2)"));
+    assert!(text.contains("config_a.json"));
+    assert!(text.contains("#1"));
+    assert!(!text.contains("config_b.json"));
+}
+
+#[test]
+fn clicking_a_placeholder_config_loads_its_ranges() {
+    let home = TempDir::new().expect("temp");
+    write_config(home.path(), "config_a.json", json!(["kk"]));
+    write_config(home.path(), "config_b.json", json!(["mm"]));
+
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.scan_placeholders();
+    assert_eq!(app.sweeps.ranges[0].name, "kk");
+
+    let _ = render(&mut app);
+    let rect = app
+        .hotspots()
+        .into_iter()
+        .find_map(|(rect, action)| match action {
+            Action::SelectPlaceholder(1) => Some(rect),
+            _ => None,
+        })
+        .expect("second placeholder row");
+    let x = rect.x + rect.width / 2;
+    let y = rect.y;
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert_eq!(app.sweeps.ranges[0].name, "mm");
+}
+
+#[test]
+fn bracket_keys_cycle_only_placeholder_configs() {
+    let home = TempDir::new().expect("temp");
+    write_config(home.path(), "config_a.json", json!([0.9]));
+    write_config(home.path(), "config_b.json", json!(["kk"]));
+    write_config(home.path(), "config_c.json", json!(["mm"]));
+
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.scan_placeholders();
+    assert_eq!(app.sweeps.placeholder_entries.len(), 2);
+    assert_eq!(app.sweeps.ranges[0].name, "kk");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    assert_eq!(app.sweeps.ranges[0].name, "mm");
+    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+    assert_eq!(app.sweeps.ranges[0].name, "kk");
+}
+
+#[test]
+fn no_placeholder_configs_show_a_message() {
+    let home = TempDir::new().expect("temp");
+    write_config(home.path(), "config_a.json", json!([0.9]));
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.scan_placeholders();
+    assert!(app.sweeps.placeholder_entries.is_empty());
+    assert!(
+        app.sweeps
+            .message
+            .contains("No configurations with placeholders")
+    );
+    assert!(app.sweeps.ranges.is_empty());
+
+    let text = render(&mut app);
+    assert!(text.contains("Placeholder configs (0)"));
 }

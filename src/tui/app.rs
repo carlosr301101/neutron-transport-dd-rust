@@ -347,10 +347,8 @@ pub enum Action {
     SelectOption(usize),
     /// Load a saved configuration.
     LoadSaved(usize),
-    /// Select the previous source configuration (placeholders screen).
-    PrevConfig,
-    /// Select the next source configuration.
-    NextConfig,
+    /// Select one configuration from the placeholder list.
+    SelectPlaceholder(usize),
     /// Save the expanded configuration list.
     SaveExpansion,
     /// Run all expanded configurations.
@@ -368,6 +366,7 @@ enum Panel {
     ResultsList,
     ResultsTable,
     SweepTable,
+    PlaceholderConfigs,
     PlotInfo,
     ExportInfo,
     Saved,
@@ -452,6 +451,10 @@ pub struct SweepState {
     pub config_selected: usize,
     /// Expansion output path.
     pub output: PathBuf,
+    /// Indices into `App::saved` that contain placeholders.
+    pub placeholder_entries: Vec<usize>,
+    /// Detected placeholder names per filtered entry.
+    pub placeholder_names: Vec<Vec<String>>,
 }
 
 impl Default for SweepState {
@@ -464,6 +467,8 @@ impl Default for SweepState {
             scroll: 0,
             config_selected: 0,
             output: paths::outputs_dir().join("inputs").join("inputs_1d.json"),
+            placeholder_entries: Vec::new(),
+            placeholder_names: Vec::new(),
         }
     }
 }
@@ -891,8 +896,10 @@ impl App {
                 self.saved_selected = index;
                 self.load_saved(index);
             }
-            Action::PrevConfig => self.select_placeholder_config(-1),
-            Action::NextConfig => self.select_placeholder_config(1),
+            Action::SelectPlaceholder(index) => {
+                self.sweeps.config_selected = index;
+                self.load_placeholder_selection();
+            }
             Action::SaveExpansion | Action::EditOutput => self.open_output_dialog(),
             Action::RunBatch => self.run_batch(),
         }
@@ -920,6 +927,9 @@ impl App {
                 } else {
                     self.results.table_offset.saturating_sub(1)
                 };
+            }
+            Panel::PlaceholderConfigs => {
+                self.select_placeholder_config(direction);
             }
             Panel::SweepTable => {
                 let max = self.sweeps.ranges.len().saturating_sub(1);
@@ -1399,7 +1409,13 @@ impl App {
 
     /// Expand the current ranges and write the list to an explicit path.
     pub fn expand_placeholders_to(&mut self, output: PathBuf) -> bool {
-        let Some(entry) = self.saved.get(self.sweeps.config_selected).cloned() else {
+        let saved_index = self
+            .sweeps
+            .placeholder_entries
+            .get(self.sweeps.config_selected)
+            .copied()
+            .unwrap_or(self.sweeps.config_selected);
+        let Some(entry) = self.saved.get(saved_index).cloned() else {
             self.sweeps.message = "No source configuration (outputs/inputs is empty).".into();
             self.status = self.sweeps.message.clone();
             self.level = Level::Error;
@@ -1462,54 +1478,97 @@ impl App {
         }
     }
 
+    /// Rebuild the list of configurations that contain placeholders.
+    pub fn refresh_placeholder_configs(&mut self) {
+        let previous = self
+            .sweeps
+            .placeholder_entries
+            .get(self.sweeps.config_selected)
+            .copied();
+        let mut entries = Vec::new();
+        let mut names = Vec::new();
+        for (index, entry) in self.saved.iter().enumerate() {
+            let Ok(value) = config_store::load_entry(entry) else {
+                continue;
+            };
+            let detected: Vec<String> = crate::placeholder::detect_placeholders(&value)
+                .into_iter()
+                .collect();
+            if !detected.is_empty() {
+                entries.push(index);
+                names.push(detected);
+            }
+        }
+        self.sweeps.placeholder_entries = entries;
+        self.sweeps.placeholder_names = names;
+        self.sweeps.config_selected = previous
+            .and_then(|previous| {
+                self.sweeps
+                    .placeholder_entries
+                    .iter()
+                    .position(|index| *index == previous)
+            })
+            .unwrap_or(0);
+    }
+
     /// Detect placeholders in the selected source configuration.
     pub fn scan_placeholders(&mut self) {
-        if self.saved.is_empty() {
+        self.refresh_placeholder_configs();
+        if self.sweeps.placeholder_entries.is_empty() {
             self.sweeps.ranges.clear();
-            self.sweeps.message = "No configurations in outputs/inputs. Save one first.".into();
+            self.sweeps.message = "No configurations with placeholders found.".into();
             return;
         }
-        if self.sweeps.config_selected >= self.saved.len() {
-            self.sweeps.config_selected = 0;
+        self.load_placeholder_selection();
+    }
+
+    fn load_placeholder_selection(&mut self) {
+        let Some(&saved_index) = self
+            .sweeps
+            .placeholder_entries
+            .get(self.sweeps.config_selected)
+        else {
+            self.sweeps.ranges.clear();
+            return;
+        };
+        let Some(entry) = self.saved.get(saved_index) else {
+            self.sweeps.ranges.clear();
+            return;
+        };
+        let names = self
+            .sweeps
+            .placeholder_names
+            .get(self.sweeps.config_selected)
+            .cloned()
+            .unwrap_or_default();
+        if names.is_empty() {
+            self.sweeps.ranges.clear();
+            self.sweeps.message = format!("No placeholders found in {}.", entry.label());
+            return;
         }
-        let entry = self.saved[self.sweeps.config_selected].clone();
-        match config_store::load_entry(&entry) {
-            Ok(value) => {
-                let names = crate::placeholder::detect_placeholders(&value);
-                self.sweeps.ranges = names
-                    .into_iter()
-                    .map(crate::sweep::SweepRange::new)
-                    .collect();
-                self.sweeps.selected = 0;
-                self.sweeps.column = 0;
-                self.sweeps.scroll = 0;
-                self.sweeps.message = if self.sweeps.ranges.is_empty() {
-                    format!("No placeholders found in {}.", entry.label())
-                } else {
-                    format!(
-                        "Detected {} placeholder(s) in {}.",
-                        self.sweeps.ranges.len(),
-                        entry.label()
-                    )
-                };
-                self.level = Level::Info;
-            }
-            Err(error) => {
-                self.sweeps.ranges.clear();
-                self.sweeps.message = format!("Could not read {}: {error}", entry.label());
-                self.level = Level::Error;
-            }
-        }
+        self.sweeps.ranges = names
+            .into_iter()
+            .map(crate::sweep::SweepRange::new)
+            .collect();
+        self.sweeps.selected = 0;
+        self.sweeps.column = 0;
+        self.sweeps.scroll = 0;
+        self.sweeps.message = format!(
+            "Detected {} placeholder(s) in {}.",
+            self.sweeps.ranges.len(),
+            entry.label()
+        );
+        self.level = Level::Info;
     }
 
     fn select_placeholder_config(&mut self, delta: i32) {
-        if self.saved.is_empty() {
+        if self.sweeps.placeholder_entries.is_empty() {
             return;
         }
-        let count = self.saved.len() as i32;
+        let count = self.sweeps.placeholder_entries.len() as i32;
         self.sweeps.config_selected =
             (self.sweeps.config_selected as i32 + delta).rem_euclid(count) as usize;
-        self.scan_placeholders();
+        self.load_placeholder_selection();
     }
 
     /// Expand and run every generated configuration.
@@ -2476,6 +2535,7 @@ impl App {
         let sections = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
+            Constraint::Length(7),
             Constraint::Length(5),
         ])
         .split(area);
@@ -2483,8 +2543,6 @@ impl App {
             frame,
             sections[0],
             &[
-                ("<", Action::PrevConfig),
-                (">", Action::NextConfig),
                 ("Save", Action::SaveExpansion),
                 ("Run batch", Action::RunBatch),
                 ("Output", Action::EditOutput),
@@ -2558,9 +2616,13 @@ impl App {
         }
         self.hitmap.panels.push((sections[1], Panel::SweepTable));
 
+        self.render_placeholder_configs(frame, sections[2]);
+
         let config_label = self
-            .saved
+            .sweeps
+            .placeholder_entries
             .get(self.sweeps.config_selected)
+            .and_then(|index| self.saved.get(*index))
             .map_or_else(|| "<none>".to_string(), |entry| entry.label());
         let counts: Vec<Option<usize>> = self.sweeps.ranges.iter().map(range_values).collect();
         let values_line = if counts.is_empty() {
@@ -2581,7 +2643,64 @@ impl App {
         ])
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title("Expansion"));
-        frame.render_widget(info, sections[2]);
+        frame.render_widget(info, sections[3]);
+    }
+
+    fn render_placeholder_configs(&mut self, frame: &mut Frame, area: Rect) {
+        let offset = self.sweeps.config_selected.saturating_sub(4);
+        let lines: Vec<Line> = self
+            .sweeps
+            .placeholder_entries
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .map(|(index, saved_index)| {
+                let entry = &self.saved[*saved_index];
+                let names = self
+                    .sweeps
+                    .placeholder_names
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_default();
+                let selected = index == self.sweeps.config_selected;
+                let style = if selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(
+                    format!(
+                        "{} {} [{}]",
+                        if selected { "▶" } else { " " },
+                        entry.label(),
+                        names.join(", ")
+                    ),
+                    style,
+                ))
+            })
+            .collect();
+        let list = Paragraph::new(lines)
+            .block(Block::bordered().title(format!(
+                "Placeholder configs ({})",
+                self.sweeps.placeholder_entries.len()
+            )))
+            .scroll((offset as u16, 0));
+        frame.render_widget(list, area);
+
+        let inner = Block::bordered().inner(area);
+        for visible in 0..inner.height as usize {
+            let index = offset + visible;
+            if index >= self.sweeps.placeholder_entries.len() {
+                break;
+            }
+            self.hitmap.actions.push((
+                Rect::new(inner.x, inner.y + visible as u16, inner.width, 1),
+                Action::SelectPlaceholder(index),
+            ));
+        }
+        self.hitmap.panels.push((area, Panel::PlaceholderConfigs));
     }
 
     fn render_plots(&mut self, frame: &mut Frame, area: Rect) {
@@ -2708,7 +2827,9 @@ impl App {
             }
             Tab::Run => "↑/↓ select   r run   c cancel   Tab switch   q quit",
             Tab::Results => "↑/↓ select output   wheel scroll   Tab switch   q quit",
-            Tab::Placeholders => "a add   d delete   ←/→ column   Enter edit   x expand   q quit",
+            Tab::Placeholders => {
+                "[ ]/click config   ↑/↓ row   ←/→ column   Enter edit   x save   R run   r rescan"
+            }
             Tab::Plots => "k/←/→ kind   g generate   o open   Tab switch   q quit",
             Tab::Export => "d data   x excel   s scs plot   o open   Tab switch   q quit",
         };
