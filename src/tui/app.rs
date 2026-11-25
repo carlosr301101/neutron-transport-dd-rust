@@ -167,6 +167,15 @@ pub enum ConfigFocus {
     Saved,
 }
 
+/// Focus of the placeholders screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceholderFocus {
+    /// Editing the ranges table.
+    Ranges,
+    /// Browsing the placeholder configuration list.
+    Configs,
+}
+
 /// What the path dialog is used for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DialogPurpose {
@@ -455,6 +464,8 @@ pub struct SweepState {
     pub placeholder_entries: Vec<usize>,
     /// Detected placeholder names per filtered entry.
     pub placeholder_names: Vec<Vec<String>>,
+    /// Focus of the screen.
+    pub focus: PlaceholderFocus,
 }
 
 impl Default for SweepState {
@@ -469,6 +480,7 @@ impl Default for SweepState {
             output: paths::outputs_dir().join("inputs").join("inputs_1d.json"),
             placeholder_entries: Vec::new(),
             placeholder_names: Vec::new(),
+            focus: PlaceholderFocus::Ranges,
         }
     }
 }
@@ -721,19 +733,46 @@ impl App {
                 KeyCode::Down => self.move_results_selection(1),
                 _ => {}
             },
-            Tab::Placeholders => match key.code {
-                KeyCode::Up => self.move_sweep_selection(-1),
-                KeyCode::Down => self.move_sweep_selection(1),
-                KeyCode::Left => self.sweeps.column = self.sweeps.column.saturating_sub(1),
-                KeyCode::Right => self.sweeps.column = (self.sweeps.column + 1).min(2),
-                KeyCode::Char('[') => self.select_placeholder_config(-1),
-                KeyCode::Char(']') => self.select_placeholder_config(1),
-                KeyCode::Char('r') => self.scan_placeholders(),
-                KeyCode::Char('x') | KeyCode::Char('p') => self.open_output_dialog(),
-                KeyCode::Char('R') => self.run_batch(),
-                KeyCode::Enter => self.edit_sweep_cell(),
-                _ => {}
-            },
+            Tab::Placeholders => {
+                if self.sweeps.focus == PlaceholderFocus::Configs {
+                    match key.code {
+                        KeyCode::Up => self.move_placeholder_config(-1),
+                        KeyCode::Down => self.move_placeholder_config(1),
+                        KeyCode::Enter => {
+                            self.load_placeholder_selection();
+                            self.sweeps.focus = PlaceholderFocus::Ranges;
+                        }
+                        KeyCode::Esc | KeyCode::Char('L') => {
+                            self.sweeps.focus = PlaceholderFocus::Ranges;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Up => self.move_sweep_selection(-1),
+                        KeyCode::Down => self.move_sweep_selection(1),
+                        KeyCode::Left => {
+                            self.sweeps.column = self.sweeps.column.saturating_sub(1);
+                        }
+                        KeyCode::Right => {
+                            self.sweeps.column = (self.sweeps.column + 1).min(2);
+                        }
+                        KeyCode::Char('L') if !self.sweeps.placeholder_entries.is_empty() => {
+                            self.sweeps.focus = PlaceholderFocus::Configs;
+                            self.status =
+                                "Placeholder list focused (Enter loads, Esc returns).".into();
+                            self.level = Level::Info;
+                        }
+                        KeyCode::Char('[') => self.select_placeholder_config(-1),
+                        KeyCode::Char(']') => self.select_placeholder_config(1),
+                        KeyCode::Char('r') => self.scan_placeholders(),
+                        KeyCode::Char('x') | KeyCode::Char('p') => self.open_output_dialog(),
+                        KeyCode::Char('R') => self.run_batch(),
+                        KeyCode::Enter => self.edit_sweep_cell(),
+                        _ => {}
+                    }
+                }
+            }
             Tab::Plots => match key.code {
                 KeyCode::Char('k') | KeyCode::Right => {
                     self.plots.kind = (self.plots.kind + 1) % PLOT_KINDS.len();
@@ -899,6 +938,7 @@ impl App {
             Action::SelectPlaceholder(index) => {
                 self.sweeps.config_selected = index;
                 self.load_placeholder_selection();
+                self.sweeps.focus = PlaceholderFocus::Ranges;
             }
             Action::SaveExpansion | Action::EditOutput => self.open_output_dialog(),
             Action::RunBatch => self.run_batch(),
@@ -1514,6 +1554,7 @@ impl App {
     /// Detect placeholders in the selected source configuration.
     pub fn scan_placeholders(&mut self) {
         self.refresh_placeholder_configs();
+        self.sweeps.focus = PlaceholderFocus::Ranges;
         if self.sweeps.placeholder_entries.is_empty() {
             self.sweeps.ranges.clear();
             self.sweeps.message = "No configurations with placeholders found.".into();
@@ -1559,6 +1600,15 @@ impl App {
             entry.label()
         );
         self.level = Level::Info;
+    }
+
+    fn move_placeholder_config(&mut self, delta: i32) {
+        if self.sweeps.placeholder_entries.is_empty() {
+            return;
+        }
+        let count = self.sweeps.placeholder_entries.len() as i32;
+        self.sweeps.config_selected =
+            (self.sweeps.config_selected as i32 + delta).rem_euclid(count) as usize;
     }
 
     fn select_placeholder_config(&mut self, delta: i32) {
@@ -2664,9 +2714,14 @@ impl App {
                     .unwrap_or_default();
                 let selected = index == self.sweeps.config_selected;
                 let style = if selected {
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
+                    if self.sweeps.focus == PlaceholderFocus::Configs {
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().bg(Color::DarkGray)
+                    }
                 } else {
                     Style::default()
                 };
@@ -2683,7 +2738,7 @@ impl App {
             .collect();
         let list = Paragraph::new(lines)
             .block(Block::bordered().title(format!(
-                "Placeholder configs ({})",
+                "Placeholder configs ({}) · L",
                 self.sweeps.placeholder_entries.len()
             )))
             .scroll((offset as u16, 0));
@@ -2828,7 +2883,7 @@ impl App {
             Tab::Run => "↑/↓ select   r run   c cancel   Tab switch   q quit",
             Tab::Results => "↑/↓ select output   wheel scroll   Tab switch   q quit",
             Tab::Placeholders => {
-                "[ ]/click config   ↑/↓ row   ←/→ column   Enter edit   x save   R run   r rescan"
+                "L list   [ ]/click config   ↑/↓ row   ←/→ column   Enter edit   x save   R run"
             }
             Tab::Plots => "k/←/→ kind   g generate   o open   Tab switch   q quit",
             Tab::Export => "d data   x excel   s scs plot   o open   Tab switch   q quit",

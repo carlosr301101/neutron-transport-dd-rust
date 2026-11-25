@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use common::cli;
 use neutron_transport_dd::sweep::SweepRange;
-use neutron_transport_dd::tui::app::{Action, App, Tab};
+use neutron_transport_dd::tui::app::{Action, App, PlaceholderFocus, Tab};
 use neutron_transport_dd::tui::services::{config_store, results as results_service};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -480,4 +480,37 @@ fn no_placeholder_configs_show_a_message() {
 
     let text = render(&mut app);
     assert!(text.contains("Placeholder configs (0)"));
+}
+
+#[test]
+fn l_focuses_the_placeholder_list_like_the_config_panel() {
+    let home = TempDir::new().expect("temp");
+    write_config(home.path(), "config_a.json", json!(["kk"]));
+    write_config(home.path(), "config_b.json", json!(["mm"]));
+
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.scan_placeholders();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE));
+    assert_eq!(app.sweeps.focus, PlaceholderFocus::Configs);
+    assert!(app.status.contains("Placeholder list focused"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.sweeps.config_selected, 1);
+    // Ranges are only reloaded when Enter is pressed, like the Config panel.
+    assert_eq!(app.sweeps.ranges[0].name, "kk");
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.sweeps.focus, PlaceholderFocus::Ranges);
+    assert_eq!(app.sweeps.ranges[0].name, "mm");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.sweeps.focus, PlaceholderFocus::Ranges);
+    assert_eq!(app.sweeps.ranges[0].name, "mm");
+
+    let text = render(&mut app);
+    assert!(text.contains("Placeholder configs (2) · L"));
 }
