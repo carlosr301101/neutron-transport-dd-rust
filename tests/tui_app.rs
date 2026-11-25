@@ -286,3 +286,45 @@ fn save_dialog_is_wider_than_the_field_editor() {
         .expect("right");
     assert_eq!(end - start + 1, 76);
 }
+
+#[test]
+fn cursor_moves_and_inserts_in_the_middle() {
+    let mut app = App::default();
+    app.select_field(FieldKind::RegionCells(0));
+    press(&mut app, KeyCode::Enter);
+    assert!(app.editing.is_some());
+
+    press(&mut app, KeyCode::Home);
+    type_text(&mut app, "1");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.model.nc[0], "120");
+}
+
+#[test]
+fn delete_and_backspace_follow_the_cursor() {
+    let mut app = App::default();
+    app.select_field(FieldKind::RegionCells(0));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Backspace);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.model.nc[0], "0");
+
+    let mut app = App::default();
+    app.select_field(FieldKind::RegionCells(0));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Delete);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.model.nc[0], "0");
+}
+
+#[test]
+fn geometry_panel_shows_only_one_length_reference() {
+    let mut app = App::default();
+    let text = render(&mut app, 120, 40);
+    assert!(text.contains("Geometry"));
+    assert!(text.contains("█"));
+    assert!(text.contains("20.00 cm"));
+    assert!(!text.contains("total:"));
+}

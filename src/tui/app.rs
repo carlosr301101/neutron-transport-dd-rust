@@ -176,12 +176,99 @@ enum EditTarget {
     Sweep { row: usize, column: usize },
 }
 
+/// Single-line text buffer with a character cursor.
+#[derive(Debug, Clone)]
+struct TextInput {
+    buffer: String,
+    cursor: usize,
+}
+
+impl TextInput {
+    fn new(text: &str) -> Self {
+        TextInput {
+            buffer: text.to_string(),
+            cursor: text.chars().count(),
+        }
+    }
+
+    fn text(&self) -> &str {
+        &self.buffer
+    }
+
+    fn len(&self) -> usize {
+        self.buffer.chars().count()
+    }
+
+    fn move_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_right(&mut self) {
+        if self.cursor < self.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn home(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn end(&mut self) {
+        self.cursor = self.len();
+    }
+
+    fn insert(&mut self, character: char) {
+        let index = byte_index(&self.buffer, self.cursor);
+        self.buffer.insert(index, character);
+        self.cursor += 1;
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let start = byte_index(&self.buffer, self.cursor - 1);
+        let end = byte_index(&self.buffer, self.cursor);
+        self.buffer.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete(&mut self) {
+        if self.cursor >= self.len() {
+            return;
+        }
+        let start = byte_index(&self.buffer, self.cursor);
+        let end = byte_index(&self.buffer, self.cursor + 1);
+        self.buffer.replace_range(start..end, "");
+    }
+}
+
+fn byte_index(text: &str, character: usize) -> usize {
+    text.char_indices()
+        .nth(character)
+        .map_or(text.len(), |(index, _)| index)
+}
+
+fn text_input_key(input: &mut TextInput, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Left => input.move_left(),
+        KeyCode::Right => input.move_right(),
+        KeyCode::Home => input.home(),
+        KeyCode::End => input.end(),
+        KeyCode::Backspace => input.backspace(),
+        KeyCode::Delete => input.delete(),
+        KeyCode::Char(character) => input.insert(character),
+        _ => return false,
+    }
+    true
+}
+
 /// In-progress cell edit.
 #[derive(Debug, Clone)]
 pub struct Edit {
     target: EditTarget,
     label: String,
-    buffer: String,
+    input: TextInput,
 }
 
 /// Dropdown of an enumerated field.
@@ -376,7 +463,7 @@ pub struct App {
     /// Active dropdown, if any.
     select: Option<SelectPopup>,
     /// Save-as dialog buffer (path being edited).
-    save_dialog: Option<String>,
+    save_dialog: Option<TextInput>,
     /// Last validation result.
     pub validation: Validation,
     /// Status line.
@@ -522,11 +609,9 @@ impl App {
                     let edit = self.editing.take().expect("edit");
                     self.apply_edit(edit);
                 }
-                KeyCode::Backspace => {
-                    edit.buffer.pop();
+                code => {
+                    text_input_key(&mut edit.input, code);
                 }
-                KeyCode::Char(character) => edit.buffer.push(character),
-                _ => {}
             }
             return;
         }
@@ -967,7 +1052,7 @@ impl App {
             self.editing = Some(Edit {
                 target: EditTarget::Field(kind),
                 label: row.label.clone(),
-                buffer: row.value.clone(),
+                input: TextInput::new(&row.value),
             });
         }
     }
@@ -1081,7 +1166,7 @@ impl App {
 
     /// Open the save-as dialog with a default path.
     pub fn open_save_dialog_with(&mut self, default: PathBuf) {
-        self.save_dialog = Some(default.to_string_lossy().to_string());
+        self.save_dialog = Some(TextInput::new(&default.to_string_lossy()));
         self.level = Level::Info;
     }
 
@@ -1092,31 +1177,26 @@ impl App {
 
     /// Current path shown in the save-as dialog.
     pub fn save_dialog_value(&self) -> Option<&str> {
-        self.save_dialog.as_deref()
+        self.save_dialog.as_ref().map(TextInput::text)
     }
 
     fn handle_save_dialog_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => self.save_dialog = None,
             KeyCode::Enter => self.commit_save_dialog(),
-            KeyCode::Backspace => {
-                if let Some(buffer) = self.save_dialog.as_mut() {
-                    buffer.pop();
+            code => {
+                if let Some(input) = self.save_dialog.as_mut() {
+                    text_input_key(input, code);
                 }
             }
-            KeyCode::Char(character) => {
-                if let Some(buffer) = self.save_dialog.as_mut() {
-                    buffer.push(character);
-                }
-            }
-            _ => {}
         }
     }
 
     fn commit_save_dialog(&mut self) {
-        let Some(raw) = self.save_dialog.clone() else {
+        let Some(input) = self.save_dialog.clone() else {
             return;
         };
+        let raw = input.text().to_string();
         match resolve_save_path(&raw) {
             Ok(path) => match self.save_to(&path) {
                 Ok(()) => {
@@ -1128,13 +1208,13 @@ impl App {
                 Err(error) => {
                     self.status = format!("Save failed: {error}");
                     self.level = Level::Error;
-                    self.save_dialog = Some(raw);
+                    self.save_dialog = Some(input);
                 }
             },
             Err(error) => {
                 self.status = format!("Save failed: {error}");
                 self.level = Level::Error;
-                self.save_dialog = Some(raw);
+                self.save_dialog = Some(input);
             }
         }
     }
@@ -1215,7 +1295,7 @@ impl App {
                 column: self.sweeps.column,
             },
             label: format!("range {} {label}", self.sweeps.selected + 1),
-            buffer: value,
+            input: TextInput::new(&value),
         });
     }
 
@@ -1456,24 +1536,25 @@ impl App {
     }
 
     fn apply_edit(&mut self, edit: Edit) {
+        let value = edit.input.text().to_string();
         match edit.target {
             EditTarget::Field(kind) => {
-                self.model.set_field(kind, &edit.buffer);
+                self.model.set_field(kind, &value);
                 self.validation = self.model.validate();
             }
             EditTarget::Sweep { row, column } => {
                 if let Some(range) = self.sweeps.ranges.get_mut(row) {
                     match column {
-                        0 => range.name = edit.buffer.trim().to_string(),
-                        1 => range.start = edit.buffer.trim().to_string(),
-                        2 => range.end = edit.buffer.trim().to_string(),
-                        _ => range.step = edit.buffer.trim().to_string(),
+                        0 => range.name = value.trim().to_string(),
+                        1 => range.start = value.trim().to_string(),
+                        2 => range.end = value.trim().to_string(),
+                        _ => range.step = value.trim().to_string(),
                     }
                 }
                 self.sweeps.message.clear();
             }
         }
-        self.status = format!("{} = {}", edit.label, edit.buffer);
+        self.status = format!("{} = {value}", edit.label);
         self.level = Level::Info;
     }
 
@@ -1827,10 +1908,10 @@ impl App {
             .block(Block::bordered().title("Validation"));
         frame.render_widget(status, chunks[0]);
 
-        let geometry = Paragraph::new(vec![
-            Line::from(geometry_bar(&self.model)),
-            Line::from(format!("total: {:.3} cm", self.model.total_thickness())),
-        ])
+        let geometry = Paragraph::new(geometry_bar(
+            &self.model,
+            chunks[1].width.saturating_sub(2) as usize,
+        ))
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title("Geometry"));
         frame.render_widget(geometry, chunks[1]);
@@ -2313,8 +2394,12 @@ impl App {
         let area = centered_rect_width(frame.area(), width, 3);
         frame.render_widget(Clear, area);
         let block = Block::bordered().title(format!("Edit {}", edit.label));
-        let visible = tail_that_fits(&edit.buffer, width.saturating_sub(4) as usize);
-        let paragraph = Paragraph::new(format!("{visible}▏")).block(block);
+        let visible = cursor_window(
+            edit.input.text(),
+            edit.input.cursor,
+            width.saturating_sub(4) as usize,
+        );
+        let paragraph = Paragraph::new(visible).block(block);
         frame.render_widget(paragraph, area);
     }
 
@@ -2355,15 +2440,15 @@ impl App {
     }
 
     fn render_save_dialog(&self, frame: &mut Frame) {
-        let Some(buffer) = self.save_dialog.as_ref() else {
+        let Some(input) = self.save_dialog.as_ref() else {
             return;
         };
         let width = 76u16.min(frame.area().width.saturating_sub(4)).max(30);
         let area = centered_rect_width(frame.area(), width, 5);
         frame.render_widget(Clear, area);
-        let visible = tail_that_fits(buffer, width.saturating_sub(4) as usize);
+        let visible = cursor_window(input.text(), input.cursor, width.saturating_sub(4) as usize);
         let lines = vec![
-            Line::from(format!("{visible}▏")),
+            Line::from(visible),
             Line::from(""),
             Line::from(Span::styled(
                 "Enter save   Esc cancel   relative paths use NTS_HOME",
@@ -2443,7 +2528,7 @@ fn format_number(value: Option<&Value>) -> String {
         .map_or_else(|| "-".to_string(), |number| format!("{number:.6}"))
 }
 
-fn geometry_bar(model: &ConfigModel) -> String {
+fn geometry_bar(model: &ConfigModel, available: usize) -> String {
     let widths: Vec<f64> = model
         .hr
         .iter()
@@ -2454,7 +2539,11 @@ fn geometry_bar(model: &ConfigModel) -> String {
         return "[no geometry]".to_string();
     }
     let total: f64 = widths.iter().sum();
-    let slots = 34usize;
+    let label = format!("{total:.2} cm");
+    let separators = widths.len().saturating_sub(1);
+    let slots = available
+        .saturating_sub(label.len() + 3 + separators)
+        .max(4);
     let mut bar = String::from("[");
     for (index, width) in widths.iter().enumerate() {
         let cells = ((width / total) * slots as f64).round().max(1.0) as usize;
@@ -2464,7 +2553,8 @@ fn geometry_bar(model: &ConfigModel) -> String {
         bar.push_str(&"█".repeat(cells));
     }
     bar.push(']');
-    bar.push_str(&format!(" {total:.2} cm"));
+    bar.push(' ');
+    bar.push_str(&label);
     bar
 }
 
@@ -2488,15 +2578,40 @@ fn centered_rect_width(area: Rect, width: u16, height: u16) -> Rect {
     vertical[1]
 }
 
-fn tail_that_fits(text: &str, max_chars: usize) -> String {
+fn cursor_window(text: &str, cursor: usize, max_cells: usize) -> String {
     let characters: Vec<char> = text.chars().collect();
-    if characters.len() <= max_chars {
-        return text.to_string();
+    let length = characters.len();
+    let cursor = cursor.min(length);
+    let max_cells = max_cells.max(3);
+    // Two ellipsis cells and one cursor cell are always reserved.
+    let budget = max_cells.saturating_sub(3).max(1);
+    let (start, end) = if length <= budget {
+        (0, length)
+    } else {
+        let mut start = cursor.saturating_sub(budget / 2);
+        if start + budget > length {
+            start = length - budget;
+        }
+        (start, start + budget)
+    };
+
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
     }
-    let skip = characters.len().saturating_sub(max_chars.saturating_sub(1));
-    let mut tail = String::from("…");
-    tail.extend(characters[skip..].iter());
-    tail
+    for (offset, character) in characters[start..end].iter().enumerate() {
+        if start + offset == cursor {
+            out.push('▏');
+        }
+        out.push(*character);
+    }
+    if cursor == end {
+        out.push('▏');
+    }
+    if end < length {
+        out.push('…');
+    }
+    out
 }
 
 fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
@@ -2532,10 +2647,11 @@ mod tests {
     #[test]
     fn geometry_bar_has_regions() {
         let model = ConfigModel::default();
-        let bar = geometry_bar(&model);
+        let bar = geometry_bar(&model, 50);
         assert!(bar.starts_with('['));
         assert!(bar.contains('█'));
         assert!(bar.contains("20.00 cm"));
+        assert!(bar.chars().count() <= 50);
     }
 
     #[test]
@@ -2602,10 +2718,40 @@ mod tests {
     }
 
     #[test]
-    fn tail_keeps_the_end_of_long_values() {
-        assert_eq!(tail_that_fits("abc", 10), "abc");
-        assert_eq!(tail_that_fits("abcdef", 4), "…def");
-        assert_eq!(tail_that_fits("abcdef", 1), "…");
+    fn text_input_edits_at_the_cursor() {
+        let mut input = TextInput::new("20");
+        input.home();
+        input.insert('1');
+        assert_eq!(input.text(), "120");
+
+        input.move_right();
+        input.insert('5');
+        assert_eq!(input.text(), "1250");
+
+        input.end();
+        input.backspace();
+        assert_eq!(input.text(), "125");
+        input.home();
+        input.delete();
+        assert_eq!(input.text(), "25");
+
+        input.move_left();
+        assert_eq!(input.cursor, 0);
+    }
+
+    #[test]
+    fn cursor_window_keeps_the_cursor_visible() {
+        let short = cursor_window("abc", 2, 10);
+        assert_eq!(short, "ab▏c");
+
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        let window = cursor_window(long, 20, 10);
+        assert!(window.contains('▏'));
+        assert!(window.chars().count() <= 10);
+
+        let at_end = cursor_window("abcdef", 6, 5);
+        assert!(at_end.ends_with('▏'));
+        assert!(at_end.starts_with('…'));
     }
 
     #[test]
