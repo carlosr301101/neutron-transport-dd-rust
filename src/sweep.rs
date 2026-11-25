@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::{Config, RunOverrides};
 use crate::placeholder::{
     build_values, contains_placeholders, decimal_places, replace_placeholders, round_to,
 };
@@ -111,7 +111,7 @@ pub fn expand(bases: &[(String, Value)], ranges: &[SweepRange]) -> Result<Expans
                 ));
                 continue;
             }
-            match Config::from_value(&expanded, 1e-5, 2000, None) {
+            match Config::from_value_with(&expanded, RunOverrides::default(), None) {
                 Ok(_) => configs.push(expanded),
                 Err(error) => errors.push(format!("Step {} ({base_name}): {error}", index + 1)),
             }

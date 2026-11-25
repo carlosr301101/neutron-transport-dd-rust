@@ -17,7 +17,7 @@ use ratatui::widgets::{
 };
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::{Config, RunOverrides};
 use crate::paths;
 use crate::post::{excel, extract, plot as plot_post};
 use crate::sweep::{self, SweepRange};
@@ -97,13 +97,15 @@ pub enum SectionId {
     Physics,
     /// Power normalization.
     Power,
+    /// Convergence tolerances.
+    Convergence,
     /// Presentation metadata.
     Metadata,
 }
 
 impl SectionId {
     /// Sections in display order.
-    pub const ALL: [SectionId; 8] = [
+    pub const ALL: [SectionId; 9] = [
         SectionId::Geometry,
         SectionId::Materials,
         SectionId::Source,
@@ -111,6 +113,7 @@ impl SectionId {
         SectionId::Boundaries,
         SectionId::Physics,
         SectionId::Power,
+        SectionId::Convergence,
         SectionId::Metadata,
     ];
 
@@ -124,6 +127,7 @@ impl SectionId {
             SectionId::Boundaries => "Boundaries",
             SectionId::Physics => "Physics",
             SectionId::Power => "Power",
+            SectionId::Convergence => "Convergence",
             SectionId::Metadata => "Metadata",
         }
     }
@@ -137,6 +141,7 @@ impl SectionId {
             "Boundaries" => SectionId::Boundaries,
             "Physics" => SectionId::Physics,
             "Power" => SectionId::Power,
+            "Convergence" => SectionId::Convergence,
             _ => SectionId::Metadata,
         }
     }
@@ -1435,7 +1440,7 @@ impl App {
                 return;
             }
         };
-        let config = match Config::from_value(&value, 1e-5, 2000, None) {
+        let config = match Config::from_value_with(&value, RunOverrides::default(), None) {
             Ok(config) => config,
             Err(error) => {
                 self.status = format!("{}: {error}", entry.name);

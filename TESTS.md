@@ -1,10 +1,11 @@
 # Test suite - Neutron Transport DD
 
-227 tests (66 unit, 160 integration, 1 doc-test) covering configuration,
+236 tests (66 unit, 169 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
 post-processing (data, normalize, Excel, plots), cancellation, the TUI (config
-form, mouse, accordion, dropdowns, plots/export) and the output format.
+form, mouse, accordion, dropdowns, plots/export), Python-TUI configuration
+compatibility and the output format.
 
 Run everything with:
 
@@ -223,6 +224,17 @@ numeric fields, JSON-serializable summary.
 - app runs a config to an explicit output and loads it,
 - results screen renders a payload,
 - starting without configs reports an error.
+
+### `python_tui_compat.rs` - configurations from the Python TUI
+
+- loads the sample fixture with `epsilon`, `max_iter`, `ZONE_NAMES` and
+  one-element boundary vectors,
+- effective tolerances from JSON, boundary expansion to N/2,
+- `ZONE_NAMES`/tolerances survive `as_dict` round-trip,
+- the sample configuration runs (50 cells, eigenvalue),
+- `validate` accepts it and `run` embeds the metadata,
+- explicit `--epsilon`/`--max-iter` flags override the JSON,
+- `expand` preserves names and tolerances.
 
 ### `tui_mouse.rs` - mouse, accordion and dropdowns
 

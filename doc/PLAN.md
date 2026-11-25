@@ -649,6 +649,17 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
 - Captura de ratón con `m` para poder copiar texto.
 - 11 tests nuevos en `tests/tui_mouse.rs` (227 totales).
 
+### Compatibilidad con configuraciones del TUI de Python
+
+- `epsilon` y `max_iter` del JSON se respetan (precedencia flag CLI > JSON >
+  default); `Config::as_dict()` los incluye.
+- Fronteras de un elemento se expanden siempre a `N/2`; en reflectivas se
+  normalizan a ceros si la longitud no coincide.
+- `ZONE_NAMES` se conserva en `run`, `expand`, `normalize`, la TUI y el
+  round-trip `as_dict`.
+- Fixture de referencia en `tests/fixtures/python_tui_config.json` y 7 tests en
+  `tests/python_tui_compat.rs` (236 totales).
+
 ### Esfuerzo: L.
 
 ---

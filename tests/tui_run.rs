@@ -236,3 +236,33 @@ fn starting_without_configs_reports_an_error() {
     assert!(!app.run.running);
     assert!(app.status.contains("No configuration selected"));
 }
+
+#[test]
+fn tui_run_honours_python_tui_configuration() {
+    let home = TempDir::new().expect("temp");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/python_tui_config.json");
+    let config_path = home.path().join("config_1d_001.json");
+    fs::copy(&fixture, &config_path).expect("copy fixture");
+
+    let mut app = App::default();
+    app.run.entries = config_store::list_from(home.path());
+    let output = home.path().join("out.json");
+    app.start_run_with_output(output.clone());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.run.running && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        app.poll_runner();
+    }
+    assert!(!app.run.running, "run did not finish");
+
+    let payload: Value = serde_json::from_str(&fs::read_to_string(&output).unwrap()).expect("json");
+    let configuration = &payload["runs"][0]["configuration"];
+    assert_eq!(configuration["epsilon"], json!(1e-5));
+    assert_eq!(configuration["max_iter"], json!(2000));
+    assert_eq!(
+        configuration["ZONE_NAMES"],
+        json!(["REFLECTOR", "Fuel 1", "Fuel 2"])
+    );
+}

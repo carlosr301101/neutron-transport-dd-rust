@@ -145,6 +145,17 @@ pub struct Config {
     pub dx_vec: Vec<f64>,
 }
 
+/// Explicit runtime overrides for `epsilon` and `max_iter`.
+///
+/// Values from the JSON configuration are used when an override is `None`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOverrides {
+    /// Scalar-flux tolerance passed on the command line.
+    pub epsilon: Option<f64>,
+    /// Maximum number of flux updates passed on the command line.
+    pub max_iter: Option<usize>,
+}
+
 impl Config {
     /// Load and validate a configuration from a JSON file.
     ///
@@ -166,6 +177,25 @@ impl Config {
         Self::from_json_str(&text, epsilon, max_iter, forced_scheme)
     }
 
+    /// Load a JSON file, honouring `epsilon`/`max_iter` from the file unless
+    /// the corresponding override is set.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Config::from_json_file`].
+    pub fn from_json_file_with(
+        path: impl AsRef<Path>,
+        overrides: RunOverrides,
+        forced_scheme: Option<Method>,
+    ) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Self::from_json_str_with(&text, overrides, forced_scheme)
+    }
+
     /// Load and validate a configuration from a JSON string.
     ///
     /// # Errors
@@ -181,6 +211,21 @@ impl Config {
         Self::from_value(&value, epsilon, max_iter, forced_scheme)
     }
 
+    /// Parse JSON text, honouring `epsilon`/`max_iter` from the file unless the
+    /// corresponding override is set.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Config::from_json_str`].
+    pub fn from_json_str_with(
+        text: &str,
+        overrides: RunOverrides,
+        forced_scheme: Option<Method>,
+    ) -> Result<Self, ConfigError> {
+        let value: Value = serde_json::from_str(text)?;
+        Self::from_value_with(&value, overrides, forced_scheme)
+    }
+
     /// Validate a JSON value describing one configuration.
     ///
     /// Keys starting with `_` are treated as comments and ignored.
@@ -194,18 +239,40 @@ impl Config {
         max_iter: usize,
         forced_scheme: Option<Method>,
     ) -> Result<Self, ConfigError> {
+        Self::from_value_with(
+            value,
+            RunOverrides {
+                epsilon: Some(epsilon),
+                max_iter: Some(max_iter),
+            },
+            forced_scheme,
+        )
+    }
+
+    /// Validate a JSON value, honouring `epsilon`/`max_iter` from the file
+    /// unless the corresponding override is set.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Config::from_value`].
+    pub fn from_value_with(
+        value: &Value,
+        overrides: RunOverrides,
+        forced_scheme: Option<Method>,
+    ) -> Result<Self, ConfigError> {
         let cleaned = strip_comment_keys(value);
         let input: ConfigInput = serde_json::from_value(cleaned)?;
-        Self::from_input(input, epsilon, max_iter, forced_scheme)
+        Self::from_input(input, overrides, forced_scheme)
     }
 
     fn from_input(
         input: ConfigInput,
-        epsilon: f64,
-        max_iter: usize,
+        overrides: RunOverrides,
         forced_scheme: Option<Method>,
     ) -> Result<Self, ConfigError> {
         let ConfigInput {
+            epsilon: json_epsilon,
+            max_iter: json_max_iter,
             num_regions,
             num_zones,
             nc,
@@ -242,6 +309,9 @@ impl Config {
         let scs = scs.ok_or_else(|| missing("SCS"))?;
         let q = q.ok_or_else(|| missing("Q"))?;
         let n_raw = n.ok_or_else(|| missing("N"))?;
+
+        let epsilon = overrides.epsilon.or(json_epsilon).unwrap_or(1e-5);
+        let max_iter = overrides.max_iter.or(json_max_iter).unwrap_or(2000);
 
         let num_regions = num_regions.unwrap_or(0);
         if num_regions == 0 {
@@ -410,6 +480,8 @@ impl Config {
         let mut map = Map::new();
         map.insert("num_regions".into(), json!(self.num_regions));
         map.insert("num_zones".into(), json!(self.num_zones));
+        map.insert("epsilon".into(), json!(self.epsilon));
+        map.insert("max_iter".into(), json!(self.max_iter));
         map.insert("NC".into(), json!(self.nc));
         map.insert("HR".into(), json!(self.hr));
         map.insert("IZL".into(), json!(self.izl));
@@ -705,18 +777,23 @@ fn boundary_vector(
             }
         }
     };
-    if strict && values.len() != n_half {
+    if values.len() == n_half {
+        return Ok(values);
+    }
+    if strict {
         return Err(ConfigError::invalid(format!(
             "{name} must have {n_half} elements or one scalar; got {}",
             values.len()
         )));
     }
-    Ok(values)
+    Ok(vec![0.0; n_half])
 }
 
 /// Raw JSON shape accepted for one configuration.
 #[derive(Debug, Default, Deserialize)]
 struct ConfigInput {
+    epsilon: Option<f64>,
+    max_iter: Option<usize>,
     num_regions: Option<usize>,
     num_zones: Option<usize>,
     #[serde(rename = "NC")]

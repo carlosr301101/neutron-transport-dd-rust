@@ -6,7 +6,7 @@ use clap::Args;
 use serde_json::{Value, json};
 
 use crate::cli::{is_two_d_config, split_configs};
-use crate::config::Config;
+use crate::config::{Config, RunOverrides};
 
 /// Arguments of `nts-rs validate`.
 #[derive(Debug, Args)]
@@ -41,7 +41,7 @@ pub(crate) fn execute(command: ValidateCommand) -> Result<u8, String> {
             continue;
         }
 
-        match Config::from_value(&config_value, 1e-5, 2000, None) {
+        match Config::from_value_with(&config_value, RunOverrides::default(), None) {
             Ok(config) => reports.push(json!({
                 "name": name,
                 "valid": true,

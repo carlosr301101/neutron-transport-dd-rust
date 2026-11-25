@@ -1,6 +1,6 @@
 //! TUI phase A: config screen rendering, editing, validation and saving.
 
-use neutron_transport_dd::config::Config;
+use neutron_transport_dd::config::{Config, RunOverrides};
 use neutron_transport_dd::tui::app::{App, Level, Tab};
 use neutron_transport_dd::tui::model::{FieldKind, Validation};
 use ratatui::Terminal;
@@ -98,13 +98,20 @@ fn saving_writes_a_loadable_configuration() {
     app.model.nc[0] = "40".into();
     app.model.nu_sigf[0] = "0.11".into();
     app.model.mode = 3; // eigenvalue
+    app.model.epsilon = "1e-6".into();
+    app.model.max_iter = "500".into();
+    app.model.zone_names = vec!["Core".into()];
 
     let path = home.path().join("config.json");
     app.save_to(&path).expect("save");
 
-    let config = Config::from_json_file(&path, 1e-5, 2000, None).expect("valid config");
+    let config =
+        Config::from_json_file_with(&path, RunOverrides::default(), None).expect("valid config");
     assert_eq!(config.ntc, 40);
     assert_eq!(config.mode.as_str(), "eigenvalue");
+    assert_eq!(config.epsilon, 1e-6);
+    assert_eq!(config.max_iter, 500);
+    assert_eq!(config.zone_names, Some(vec!["Core".to_string()]));
 }
 
 #[test]
@@ -164,4 +171,17 @@ fn toggling_a_flag_does_not_open_the_editor() {
     press(&mut app, KeyCode::Enter);
     assert!(app.editing.is_none());
     assert!(app.model.reflex_izq);
+}
+
+#[test]
+fn adding_zones_pads_zone_names() {
+    let mut app = App::default();
+    app.model.zone_names = vec!["Reflector".into()];
+    app.model
+        .set_field(neutron_transport_dd::tui::model::FieldKind::NumRegions, "3");
+    app.model
+        .set_field(neutron_transport_dd::tui::model::FieldKind::NumZones, "3");
+    assert_eq!(app.model.zone_names, vec!["Reflector", "Zone 2", "Zone 3"]);
+    let validation = app.model.validate();
+    assert!(matches!(validation, Validation::Valid(_)), "{validation:?}");
 }

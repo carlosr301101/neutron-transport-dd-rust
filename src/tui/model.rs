@@ -6,7 +6,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::config::Config;
+use crate::config::{Config, RunOverrides};
 use crate::placeholder::detect_placeholders;
 
 /// Quadrature orders offered by the editor.
@@ -69,6 +69,10 @@ pub enum FieldKind {
     Nu,
     /// Cross-sectional area.
     AreaCm2,
+    /// Scalar-flux convergence tolerance.
+    Epsilon,
+    /// Maximum number of flux updates.
+    MaxIter,
     /// Optional zone names.
     ZoneNames,
 }
@@ -150,6 +154,10 @@ pub struct ConfigModel {
     pub nu: String,
     /// Cross-sectional area \[cm²\].
     pub area_cm2: String,
+    /// Scalar-flux tolerance.
+    pub epsilon: String,
+    /// Maximum number of flux updates.
+    pub max_iter: String,
     /// Optional zone names.
     pub zone_names: Vec<String>,
 }
@@ -182,6 +190,8 @@ impl Default for ConfigModel {
             ef_mev: "200".into(),
             nu: String::new(),
             area_cm2: "1".into(),
+            epsilon: "1e-5".into(),
+            max_iter: "2000".into(),
             zone_names: Vec::new(),
         }
     }
@@ -346,6 +356,18 @@ impl ConfigModel {
             kind: FieldKind::AreaCm2,
         });
         fields.push(Field {
+            section: "Convergence",
+            label: "epsilon".into(),
+            value: self.epsilon.clone(),
+            kind: FieldKind::Epsilon,
+        });
+        fields.push(Field {
+            section: "Convergence",
+            label: "max_iter".into(),
+            value: self.max_iter.clone(),
+            kind: FieldKind::MaxIter,
+        });
+        fields.push(Field {
             section: "Metadata",
             label: "ZONE_NAMES".into(),
             value: self.zone_names.join(", "),
@@ -412,6 +434,8 @@ impl ConfigModel {
             FieldKind::EfMev => self.ef_mev = text.to_string(),
             FieldKind::Nu => self.nu = text.to_string(),
             FieldKind::AreaCm2 => self.area_cm2 = text.to_string(),
+            FieldKind::Epsilon => self.epsilon = text.to_string(),
+            FieldKind::MaxIter => self.max_iter = text.to_string(),
             FieldKind::ZoneNames => {
                 self.zone_names = text
                     .split(',')
@@ -483,6 +507,8 @@ impl ConfigModel {
         insert_optional(&mut map, "E_F_MEV", &self.ef_mev);
         insert_optional(&mut map, "NU", &self.nu);
         insert_optional(&mut map, "AREA_CM2", &self.area_cm2);
+        insert_optional(&mut map, "epsilon", &self.epsilon);
+        insert_optional(&mut map, "max_iter", &self.max_iter);
         if !self.zone_names.is_empty() {
             map.insert("ZONE_NAMES".into(), json!(self.zone_names));
         }
@@ -496,7 +522,7 @@ impl ConfigModel {
         if !placeholders.is_empty() {
             return Validation::Template(placeholders.into_iter().collect());
         }
-        match Config::from_value(&value, 1e-5, 2000, None) {
+        match Config::from_value_with(&value, RunOverrides::default(), None) {
             Ok(config) => Validation::Valid(Box::new(config)),
             Err(error) => Validation::Invalid(error.to_string()),
         }
@@ -527,8 +553,15 @@ impl ConfigModel {
         resize(&mut self.scs, zones, "0.9");
         resize(&mut self.nu_sigf, zones, "0.0");
         resize(&mut self.sigma_f, zones, "");
+        let had_names = self.zone_names.iter().any(|name| !name.is_empty());
         resize(&mut self.zone_names, zones, "");
-        if self.zone_names.iter().all(|name| name.is_empty()) {
+        if had_names {
+            for (index, name) in self.zone_names.iter_mut().enumerate() {
+                if name.is_empty() {
+                    *name = format!("Zone {}", index + 1);
+                }
+            }
+        } else {
             self.zone_names.clear();
         }
         self.num_zones = zones;

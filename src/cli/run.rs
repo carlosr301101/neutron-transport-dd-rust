@@ -6,7 +6,7 @@ use clap::Args;
 use serde_json::Value;
 
 use crate::cli::{confirm, split_configs};
-use crate::config::Config;
+use crate::config::{Config, RunOverrides};
 use crate::core::Runner;
 use crate::logging::RunLog;
 use crate::paths;
@@ -33,13 +33,13 @@ pub struct RunCommand {
     #[arg(long, value_parser = parse_scheme)]
     scheme: Option<Method>,
 
-    /// Convergence tolerance for the scalar flux.
-    #[arg(short, long, default_value_t = 1e-5)]
-    epsilon: f64,
+    /// Convergence tolerance for the scalar flux (default: config or 1e-5).
+    #[arg(short, long)]
+    epsilon: Option<f64>,
 
-    /// Maximum number of flux updates.
-    #[arg(short, long, default_value_t = 2000)]
-    max_iter: usize,
+    /// Maximum number of flux updates (default: config or 2000).
+    #[arg(short, long)]
+    max_iter: Option<usize>,
 }
 
 fn parse_scheme(raw: &str) -> Result<Method, String> {
@@ -52,7 +52,9 @@ pub(crate) fn execute(args: RunCommand, verbose: bool) -> Result<u8, String> {
     let mut failures = 0usize;
 
     if args.manual {
-        let config = wizard::run_interactive(args.scheme, args.epsilon, args.max_iter)
+        let epsilon = args.epsilon.unwrap_or(1e-5);
+        let max_iter = args.max_iter.unwrap_or(2000);
+        let config = wizard::run_interactive(args.scheme, epsilon, max_iter)
             .map_err(|error| error.to_string())?;
         print_summary(&config);
         if !confirm("Run? (y/n) [y]: ", true)? {
@@ -76,7 +78,14 @@ pub(crate) fn execute(args: RunCommand, verbose: bool) -> Result<u8, String> {
         let source = path.to_string_lossy().to_string();
 
         for (name, config_value) in configs {
-            match Config::from_value(&config_value, args.epsilon, args.max_iter, args.scheme) {
+            match Config::from_value_with(
+                &config_value,
+                RunOverrides {
+                    epsilon: args.epsilon,
+                    max_iter: args.max_iter,
+                },
+                args.scheme,
+            ) {
                 Ok(config) => run_one(
                     &name,
                     config,
