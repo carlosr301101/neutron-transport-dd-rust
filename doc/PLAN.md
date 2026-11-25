@@ -712,7 +712,8 @@ nts-rs dataset --json base.json \
 - `Cargo.toml`: `rust-version = "1.88"`, `include` explícito (código, fuentes,
   ejemplos, tests y docs), `[profile.release]` con `lto = "thin"`,
   `codegen-units = 1` y `strip = true`.
-- `LICENSE` MIT y `CHANGELOG.md` con la 0.1.0.
+- `LICENSE` MIT y `CHANGELOG.md` con la 0.2.0 (`v0.1.0` ya existía como tag
+de la etapa Python).
 - `README` con badges, instalación desde crates.io (`cargo install
   neutron-transport-dd`, variante `--features images`), binarios precompilados,
   build desde fuente y MSRV.
