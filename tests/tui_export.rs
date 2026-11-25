@@ -4,6 +4,7 @@ mod common;
 
 use std::fs;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use common::cli;
 use neutron_transport_dd::sweep::SweepRange;
@@ -11,7 +12,6 @@ use neutron_transport_dd::tui::app::{App, Tab};
 use neutron_transport_dd::tui::services::{config_store, results as results_service};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -66,6 +66,14 @@ fn render(app: &mut App) -> String {
     text
 }
 
+fn read_json(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read")).expect("json")
+}
+
+fn read_list(path: &Path) -> Vec<Value> {
+    read_json(path).as_array().cloned().expect("list")
+}
+
 fn png_size(path: &Path) -> (u32, u32) {
     let bytes = fs::read(path).expect("png");
     assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -77,16 +85,42 @@ fn png_size(path: &Path) -> (u32, u32) {
 }
 
 #[test]
-fn placeholder_screen_renders_and_adds_ranges() {
+fn placeholder_screen_detects_placeholders() {
+    let home = TempDir::new().expect("temp");
+    fs::write(
+        home.path().join("config_1d_001.json"),
+        serde_json::to_string_pretty(&json!({
+            "num_regions": 1, "num_zones": 1,
+            "NC": [20], "HR": [20.0], "IZL": [1],
+            "SCT": [1.0], "SCS": ["kk"], "NU_SIGF": ["mm"],
+            "Q": [0.0], "N": 8, "MODE": "eigenvalue",
+            "ZONE_NAMES": ["Core"],
+            "bound_left": [0, 0], "bound_right": [0, 0]
+        }))
+        .unwrap(),
+    )
+    .expect("write");
+
     let mut app = App::default();
-    app.switch_tab(Tab::Placeholders);
-    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-    assert_eq!(app.sweeps.ranges.len(), 1);
-    assert_eq!(app.sweeps.ranges[0].name, "kk");
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home.path());
+    app.sweeps.config_selected = 0;
+    app.scan_placeholders();
+
+    let names: Vec<&str> = app
+        .sweeps
+        .ranges
+        .iter()
+        .map(|range| range.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["kk", "mm"]);
+    assert_eq!(app.sweeps.ranges[0].start, "0.1");
+    assert_eq!(app.sweeps.ranges[0].end, "0.5");
 
     let text = render(&mut app);
     assert!(text.contains("Placeholders"));
     assert!(text.contains("kk"));
+    assert!(text.contains("Values"));
     assert!(text.contains("Expansion"));
 }
 
@@ -108,7 +142,8 @@ fn expansion_writes_the_config_list() {
     .expect("write");
 
     let mut app = App::default();
-    app.run.entries = config_store::list_from(home.path());
+    app.saved = config_store::list_from(home.path());
+    app.sweeps.config_selected = 0;
     app.sweeps.ranges = vec![SweepRange {
         name: "kk".into(),
         start: "0.1".into(),
@@ -200,4 +235,109 @@ fn tui_requires_an_interactive_terminal() {
     let output = cli(home.path(), &["tui"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
+}
+
+fn placeholder_config() -> Value {
+    json!({
+        "num_regions": 1, "num_zones": 1,
+        "NC": [10], "HR": [10.0], "IZL": [1],
+        "SCT": [1.0], "SCS": ["kk"], "NU_SIGF": [0.0],
+        "Q": ["qq"], "N": 2, "MODE": "fixed_source",
+        "epsilon": 1e-3, "max_iter": 500,
+        "bound_left": [0], "bound_right": [0]
+    })
+}
+
+fn app_with_placeholders(home: &Path) -> App {
+    fs::write(
+        home.join("config_1d_001.json"),
+        serde_json::to_string_pretty(&placeholder_config()).unwrap(),
+    )
+    .expect("write");
+    let mut app = App::default();
+    app.tab = Tab::Placeholders;
+    app.saved = config_store::list_from(home);
+    app.sweeps.config_selected = 0;
+    app.scan_placeholders();
+    app
+}
+
+#[test]
+fn strict_ranges_expand_in_parallel() {
+    let home = TempDir::new().expect("temp");
+    let mut app = app_with_placeholders(home.path());
+    let names: Vec<&str> = app.sweeps.ranges.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["kk", "qq"]);
+
+    app.sweeps.ranges[0].start = "0.1".into();
+    app.sweeps.ranges[0].end = "0.5".into();
+    app.sweeps.ranges[0].step = "0.2".into();
+    app.sweeps.ranges[1].start = "0.5".into();
+    app.sweeps.ranges[1].end = "0.7".into();
+    app.sweeps.ranges[1].step = "0.1".into();
+
+    let output = home.path().join("inputs.json");
+    assert!(app.expand_placeholders_to(output.clone()));
+    let configs = read_list(&output);
+    assert_eq!(configs.len(), 3);
+    assert_eq!(configs[0]["SCS"][0], json!(0.1));
+    assert_eq!(configs[0]["Q"][0], json!(0.5));
+    assert_eq!(configs[2]["SCS"][0], json!(0.5));
+    assert_eq!(configs[2]["Q"][0], json!(0.7));
+}
+
+#[test]
+fn unequal_ranges_are_rejected() {
+    let home = TempDir::new().expect("temp");
+    let mut app = app_with_placeholders(home.path());
+    app.sweeps.ranges[0].start = "0.1".into();
+    app.sweeps.ranges[0].end = "0.5".into();
+    app.sweeps.ranges[0].step = "0.2".into();
+    app.sweeps.ranges[1].start = "0.5".into();
+    app.sweeps.ranges[1].end = "0.6".into();
+    app.sweeps.ranges[1].step = "0.1".into();
+
+    let output = home.path().join("inputs.json");
+    assert!(!app.expand_placeholders_to(output.clone()));
+    assert!(!output.exists());
+    assert!(app.sweeps.message.contains("same length"));
+}
+
+#[test]
+fn output_dialog_prefills_the_conventional_path() {
+    let mut app = App::default();
+    app.open_output_dialog();
+    let value = app.save_dialog_value().expect("path");
+    assert!(value.ends_with("outputs/inputs/inputs_1d.json"));
+}
+
+#[test]
+fn batch_runs_every_expanded_configuration() {
+    let home = TempDir::new().expect("temp");
+    let mut app = app_with_placeholders(home.path());
+    app.sweeps.ranges[0].start = "0.1".into();
+    app.sweeps.ranges[0].end = "0.3".into();
+    app.sweeps.ranges[0].step = "0.1".into();
+    app.sweeps.ranges[1].start = "0.5".into();
+    app.sweeps.ranges[1].end = "0.7".into();
+    app.sweeps.ranges[1].step = "0.1".into();
+
+    let list = home.path().join("inputs.json");
+    let output = home.path().join("output_1d_001.json");
+    app.run_batch_to(list.clone(), output.clone());
+    assert!(app.run.running);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while app.run.running && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        app.poll_runner();
+    }
+    assert!(!app.run.running, "batch did not finish");
+    assert!(list.exists());
+
+    let payload = read_json(&output);
+    assert_eq!(payload["total"], 3);
+    assert_eq!(payload["failures"], 0);
+    assert_eq!(payload["runs"].as_array().unwrap().len(), 3);
+    assert_eq!(payload["runs"][0]["config_name"], "json_config_001");
 }

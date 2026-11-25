@@ -347,3 +347,16 @@ fn editor_cursor_does_not_split_the_number() {
     assert!(content.contains("20"));
     assert!(!content.contains('▏'));
 }
+
+#[test]
+fn config_screen_shows_saved_panel_and_placeholder_hint() {
+    let home = TempDir::new().expect("temp");
+    std::fs::write(home.path().join("config_1d_001.json"), "{}").unwrap();
+
+    let mut app = App::default();
+    app.saved = neutron_transport_dd::tui::services::config_store::list_from(home.path());
+    let text = render(&mut app, 140, 40);
+    assert!(text.contains("Configs ("));
+    assert!(text.contains("config_1d_001.json"));
+    assert!(text.contains("kk/mm = placeholders"));
+}

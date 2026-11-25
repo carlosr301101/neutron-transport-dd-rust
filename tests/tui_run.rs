@@ -66,7 +66,7 @@ fn background_run_writes_the_output() {
                 break;
             }
             Ok(RunEvent::Failed(error)) => panic!("run failed: {error}"),
-            Ok(RunEvent::Log(_)) => {}
+            Ok(RunEvent::Log(_)) | Ok(RunEvent::BatchDone { .. }) => {}
             Err(_) => {}
         }
     }
@@ -102,7 +102,7 @@ fn cancellation_stops_a_background_run() {
                 break;
             }
             Ok(RunEvent::Done { .. }) => panic!("run finished before cancellation"),
-            Ok(RunEvent::Log(_)) => {}
+            Ok(RunEvent::Log(_)) | Ok(RunEvent::BatchDone { .. }) => {}
             Err(_) => {}
         }
     }
@@ -265,4 +265,91 @@ fn tui_run_honours_python_tui_configuration() {
         configuration["ZONE_NAMES"],
         json!(["REFLECTOR", "Fuel 1", "Fuel 2"])
     );
+}
+
+#[test]
+fn config_store_expands_list_items() {
+    let home = TempDir::new().expect("temp");
+    fs::write(
+        home.path().join("inputs_1d.json"),
+        serde_json::to_string(&json!([
+            {"NC": [10], "SCS": [0.1]},
+            {"NC": [20], "SCS": [0.2]}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let entries = config_store::list_from(home.path());
+    assert_eq!(entries.len(), 2);
+    assert!(entries[0].label().ends_with("#1"));
+    let second = config_store::load_entry(&entries[1]).expect("item");
+    assert_eq!(second["NC"][0], json!(20));
+}
+
+#[test]
+fn config_screen_loads_saved_configurations() {
+    let home = TempDir::new().expect("temp");
+    fs::write(
+        home.path().join("config_1d_001.json"),
+        serde_json::to_string(&json!({
+            "num_regions": 1, "num_zones": 1,
+            "NC": [40], "HR": [20.0], "IZL": [1],
+            "SCT": [1.0], "SCS": ["kk"], "NU_SIGF": [0.11],
+            "Q": [0.0], "N": 8, "MODE": "eigenvalue",
+            "ZONE_NAMES": ["Core"],
+            "bound_left": [0, 0, 0, 0], "bound_right": [0, 0, 0, 0]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        home.path().join("inputs_1d.json"),
+        serde_json::to_string(&json!([
+            {"NC": [5], "SCS": [0.5]},
+            {"NC": [7], "SCS": [0.6]}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut app = App::default();
+    app.saved = config_store::list_from(home.path());
+    app.load_saved(0);
+    assert_eq!(app.model.nc[0], "40");
+    assert_eq!(app.model.scs[0], "kk");
+    assert_eq!(app.model.zone_names, vec!["Core"]);
+
+    let item = app
+        .saved
+        .iter()
+        .position(|entry| entry.index == Some(1))
+        .expect("second list item");
+    app.load_saved(item);
+    assert_eq!(app.model.nc[0], "7");
+    assert_eq!(app.model.scs[0], "0.6");
+}
+
+#[test]
+fn running_a_template_points_to_the_placeholders_tab() {
+    let home = TempDir::new().expect("temp");
+    let path = home.path().join("config_1d_001.json");
+    fs::write(
+        &path,
+        serde_json::to_string(&json!({
+            "num_regions": 1, "num_zones": 1,
+            "NC": [10], "HR": [10.0], "IZL": [1],
+            "SCT": [1.0], "SCS": ["kk"], "NU_SIGF": [0.0],
+            "Q": [1.0], "N": 2, "MODE": "fixed_source",
+            "bound_left": [0], "bound_right": [0]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut app = App::default();
+    app.run.entries = config_store::list_from(home.path());
+    app.start_run_with_output(home.path().join("out.json"));
+    assert!(!app.run.running);
+    assert!(app.status.contains("Placeholders"));
 }
