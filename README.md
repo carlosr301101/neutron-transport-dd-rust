@@ -221,9 +221,10 @@ editable: `Enter` saves, `Esc` cancels. A bare file name is stored under
 `outputs/inputs/`, relative paths are resolved against the work directory,
 `~/` is expanded and a missing `.json` extension is appended.
 
-The field editor and the save dialog support `←`/`→`, `Home`/`End`,
-`Backspace` and `Delete`; typing inserts at the cursor and the visible window
-follows it with `…` on the clipped side. The Geometry panel shows the
+The field editor (22 columns) and the save dialog support `←`/`→`,
+`Home`/`End`, `Backspace` and `Delete`; typing inserts at the cursor and the
+visible window follows it with `…` on the clipped side. The caret is the
+terminal cursor, so it never inserts a gap between digits. The Geometry panel shows the
 proportional bar with a single length reference; each region segment is
 coloured by its material zone (`IZL`), so different zones are visually
 distinguishable.
