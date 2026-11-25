@@ -2,6 +2,7 @@
 name = "neutron-transport-dd"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["int_64 <carlosr301101@gmail.com>"]
 description = "A high-performance neutron transport solver using the S_N (Discrete Ordinates) method with domain decomposition. Solves the 1D neutron transport (Boltzmann) equation with automatic or manual configuration."
 license = "MIT"
@@ -10,6 +11,24 @@ documentation = "https://docs.rs/neutron-transport-dd"
 keywords = ["neutron", "transport", "boltzmann", "s_n", "domain-decomposition"]
 categories = ["science", "simulation", "mathematics"]
 readme = "README.md"
+include = [
+    "src/**",
+    "assets/**",
+    "data/**",
+    "tests/**",
+    "doc/PLAN.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "TESTS.md",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
 
 [lib]
 name = "neutron_transport_dd"

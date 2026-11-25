@@ -1,5 +1,10 @@
 # Neutron Transport with Domain Decomposition (Rust)
 
+[![Crates.io](https://img.shields.io/crates/v/neutron-transport-dd.svg)](https://crates.io/crates/neutron-transport-dd)
+[![docs.rs](https://img.shields.io/docsrs/neutron-transport-dd)](https://docs.rs/neutron-transport-dd)
+[![CI](https://github.com/carlosr301101/neutron-transport-dd-rust/actions/workflows/rust.yml/badge.svg)](https://github.com/carlosr301101/neutron-transport-dd-rust/actions/workflows/rust.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A Rust port of the 1D S_N (discrete ordinates) neutron transport workflow of
 [`neutron-transport-PINNs`](https://github.com/carlosr301101/neutron-transport-PINNs).
 It solves the one-dimensional transport equation with Diamond Difference,
@@ -35,13 +40,44 @@ PINN dataset/packaging step are pending.
   defaults as the Python CLI.
 - **No runtime data files**: quadrature data is embedded in the binary.
 
-## Build
+## Installation
+
+### From crates.io
+
+```bash
+cargo install neutron-transport-dd
+```
+
+This installs the `nts-rs` binary.
+
+For the optional inline plot preview:
+
+```bash
+cargo install neutron-transport-dd --features images
+```
+
+### Prebuilt binaries
+
+`nts-rs` binaries for Linux (x86_64) and Windows (x86_64) are attached to each
+[GitHub release](https://github.com/carlosr301101/neutron-transport-dd-rust/releases).
+They are built with the default features (no inline preview).
+
+### From source
+
+```bash
+git clone https://github.com/carlosr301101/neutron-transport-dd-rust
+cd neutron-transport-dd-rust
+cargo install --path .
+```
+
+Or build without installing:
 
 ```bash
 cargo build --release
+# binary: target/release/nts-rs
 ```
 
-The binary is `target/release/nts-rs`.
+Rust **1.88** or newer is required (the crate uses let-chains).
 
 ## CLI
 

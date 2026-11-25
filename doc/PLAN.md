@@ -707,15 +707,27 @@ nts-rs dataset --json base.json \
 - Fase B (opcional): bindings con `pyo3` (feature `python`) para llamar al
   solver desde Python sin subprocess.
 
-### Empaquetado y CI
+### Empaquetado y CI — hecho
 
-- `Cargo.toml`: metadatos finales, `rust-version`, `keywords`, `categories`.
-- CI: `fmt`, `clippy --all-targets --all-features`, `test`, `doc`, build
-  `--release`; cache de `~/.cargo` y `target`.
-- Release: binarios Linux/macOS/Windows; el workflow de publicación valida
-  que `vX.Y.Z` coincide con `Cargo.toml`.
-- Licencia/MIT y `README` con instalación (`cargo install`, binarios).
-- `CHANGELOG.md` por paso.
+- `Cargo.toml`: `rust-version = "1.88"`, `include` explícito (código, fuentes,
+  ejemplos, tests y docs), `[profile.release]` con `lto = "thin"`,
+  `codegen-units = 1` y `strip = true`.
+- `LICENSE` MIT y `CHANGELOG.md` con la 0.1.0.
+- `README` con badges, instalación desde crates.io (`cargo install
+  neutron-transport-dd`, variante `--features images`), binarios precompilados,
+  build desde fuente y MSRV.
+- CI (`.github/workflows/rust.yml`): `fmt`, `clippy -D warnings` (todas las
+  features), `test --locked` en Linux y Windows, `check --all-features`, `doc`
+  con `-D warnings` y `cargo package`; `dtolnay/rust-toolchain` +
+  `Swatinem/rust-cache`.
+- Publicación (`.github/workflows/publish.yml`): tag `vX.Y.Z` → CI → validación
+  de versión con `cargo metadata` + `jq` → `cargo publish --locked`.
+- Release (`.github/workflows/release.yml`): binarios
+  `x86_64-unknown-linux-gnu` y `x86_64-pc-windows-msvc` con
+  `taiki-e/upload-rust-binary-action`. Se elimina `linux_distro.yml`.
+- Verificado en local: `fmt`, `clippy --all-features -D warnings`, 265 tests,
+  `doc -D warnings`, `cargo package --list` (78 ficheros) y
+  `cargo publish --dry-run` (compila el tarball empaquetado).
 
 ### Tests
 
@@ -744,7 +756,7 @@ nts-rs dataset --json base.json \
 | 3 | 0, 1 | M/L (hecho) | plots sin display, Excel |
 | 4 | 1 | M/L | binarios externos, paralelismo |
 | 5 | 0–3 | L (hecho) | alcance de la TUI |
-| 6 | 2–4 | M | formatos de dataset |
+| 6 | 2–4 | M | formatos de dataset (empaquetado y CI hechos) |
 
 Sugerencia de ejecución: **1 → 2 → 3 → 4 → 5 → 6**, con un commit por paso y
 un `CHANGELOG` por release. Cada paso debe terminar con tests, `fmt` y `clippy`

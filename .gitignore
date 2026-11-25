@@ -1,3 +1,5 @@
 /target
 *.out
 /outputs
+/.agents
+/skills-lock.json

@@ -271,6 +271,30 @@ numeric fields, JSON-serializable summary.
 - export screen rendering,
 - `tui` refuses to start without a terminal.
 
+## Packaging and CI
+
+`cargo package --list` is the source of truth for what ships. The crate
+includes `src/`, `assets/fonts` (embedded at compile time), `data/` examples,
+`tests/`, `doc/PLAN.md`, `README.md`, `LICENSE`, `CHANGELOG.md` and `TESTS.md`;
+build artefacts (`outputs/`, `target/`) are excluded.
+
+The same gate runs locally and in `.github/workflows/rust.yml`:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
+cargo check --locked --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo package --locked
+cargo publish --dry-run --locked
+```
+
+CI runs the tests on Linux and Windows (the release targets), `cargo package`
+to prove the crate builds from the packaged tarball, and the release workflow
+attaches `nts-rs-<tag>-<target>.tar.gz|zip` binaries for
+`x86_64-unknown-linux-gnu` and `x86_64-pc-windows-msvc`.
+
 ## Reference environment
 
 Tests are deterministic (no random inputs). Benchmarks use the Python
