@@ -58,6 +58,26 @@ pub struct Expansion {
 /// Returns a message when no range is given, a value cannot be parsed, or a
 /// grid is invalid.
 pub fn expand(bases: &[(String, Value)], ranges: &[SweepRange]) -> Result<Expansion, String> {
+    expand_internal(bases, ranges, false)
+}
+
+/// Expand ranges that must all produce the same number of values.
+///
+/// # Errors
+///
+/// Returns a message when the lengths differ (or when [`expand`] would fail).
+pub fn expand_strict(
+    bases: &[(String, Value)],
+    ranges: &[SweepRange],
+) -> Result<Expansion, String> {
+    expand_internal(bases, ranges, true)
+}
+
+fn expand_internal(
+    bases: &[(String, Value)],
+    ranges: &[SweepRange],
+    require_equal: bool,
+) -> Result<Expansion, String> {
     if ranges.is_empty() {
         return Err("No placeholders provided".to_string());
     }
@@ -84,6 +104,15 @@ pub fn expand(bases: &[(String, Value)], ranges: &[SweepRange]) -> Result<Expans
         .map(|(_, values)| values.len())
         .max()
         .unwrap_or(0);
+
+    if require_equal && steps != max_len {
+        let lengths = grids
+            .iter()
+            .map(|(name, values)| format!("{name}={}", values.len()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("ranges must have the same length: {lengths}"));
+    }
     let names: BTreeSet<String> = grids.iter().map(|(name, _)| name.clone()).collect();
 
     let mut configs = Vec::new();

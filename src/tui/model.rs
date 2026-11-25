@@ -528,6 +528,125 @@ impl ConfigModel {
         }
     }
 
+    /// Build the form from a configuration object.
+    ///
+    /// Tolerant by design: placeholders are kept as text, `null` optionals are
+    /// left blank and missing arrays are padded with defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the value is not a JSON object.
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "configuration must be a JSON object".to_string())?;
+
+        let nc = text_list(object.get("NC"));
+        let hr = text_list(object.get("HR"));
+        let izl = text_list(object.get("IZL"));
+        let q = text_list(object.get("Q"));
+        let sct = text_list(object.get("SCT"));
+        let scs = text_list(object.get("SCS"));
+        let nu_sigf = text_list(object.get("NU_SIGF"));
+        let sigma_f = text_list(object.get("SIGMA_F"));
+        let names = text_list(object.get("ZONE_NAMES"));
+
+        let regions = object
+            .get("num_regions")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or_else(|| nc.len().max(hr.len()).max(izl.len()).max(q.len()).max(1))
+            .max(1);
+        let zones = object
+            .get("num_zones")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or_else(|| {
+                sct.len()
+                    .max(scs.len())
+                    .max(nu_sigf.len())
+                    .max(sigma_f.len())
+                    .max(names.len())
+                    .max(1)
+            })
+            .max(1);
+
+        let mut model = ConfigModel {
+            num_regions: regions,
+            num_zones: zones,
+            nc: fit(nc, regions, "10"),
+            hr: fit(hr, regions, "10"),
+            izl: fit(izl, regions, "1"),
+            q: fit(q, regions, "0.0"),
+            sct: fit(sct, zones, "1.0"),
+            scs: fit(scs, zones, "0.9"),
+            nu_sigf: fit(nu_sigf, zones, "0.0"),
+            sigma_f: fit(sigma_f, zones, ""),
+            ..ConfigModel::default()
+        };
+
+        if !names.is_empty() {
+            let mut names = fit(names, zones, "");
+            for (index, name) in names.iter_mut().enumerate() {
+                if name.is_empty() {
+                    *name = format!("Zone {}", index + 1);
+                }
+            }
+            model.zone_names = names;
+        }
+
+        if let Some(n) = object.get("N").and_then(Value::as_u64) {
+            let n = n as usize;
+            if QUADRATURE.contains(&n) {
+                model.n = n;
+            }
+        }
+        if let Some(name) = object.get("SPATIAL_SCHEME").and_then(Value::as_str)
+            && let Some(index) = SCHEMES
+                .iter()
+                .position(|scheme| scheme.eq_ignore_ascii_case(name))
+        {
+            model.scheme = index;
+        }
+        if let Some(name) = object.get("MODE").and_then(Value::as_str)
+            && let Some(index) = MODES
+                .iter()
+                .position(|mode| mode.eq_ignore_ascii_case(name))
+        {
+            model.mode = index;
+        }
+
+        model.reflex_izq = boolish(object.get("reflex_izq")).unwrap_or(false);
+        model.reflex_der = boolish(object.get("reflex_der")).unwrap_or(false);
+
+        let half = model.n / 2;
+        let left = text_list(object.get("bound_left"));
+        let right = text_list(object.get("bound_right"));
+        model.bound_left = if left.is_empty() {
+            vec!["0".into(); half]
+        } else {
+            left
+        };
+        model.bound_right = if right.is_empty() {
+            vec!["0".into(); half]
+        } else {
+            right
+        };
+
+        model.k_eff = optional_text(object.get("K_EFF"));
+        model.k0 = optional_text(object.get("K0"));
+        model.power_kw = optional_text(object.get("POWER_KW"));
+        model.nu = optional_text(object.get("NU"));
+        model.tol_k = default_text(object.get("TOL_K"), "1e-6");
+        model.max_outer = default_text(object.get("MAX_OUTER"), "200");
+        model.ef_mev = default_text(object.get("E_F_MEV"), "200");
+        model.area_cm2 = default_text(object.get("AREA_CM2"), "1");
+        model.epsilon = default_text(object.get("epsilon"), "1e-5");
+        model.max_iter = default_text(object.get("max_iter"), "2000");
+
+        Ok(model)
+    }
+
     /// Total slab thickness \[cm\] from the current text values.
     pub fn total_thickness(&self) -> f64 {
         self.hr
@@ -579,6 +698,56 @@ impl ConfigModel {
         resize(&mut self.bound_left, half, "0");
         resize(&mut self.bound_right, half, "0");
     }
+}
+
+fn text_list(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(items)) => items.iter().map(value_text).collect(),
+        Some(Value::Null) | None => Vec::new(),
+        Some(other) => vec![value_text(other)],
+    }
+}
+
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn optional_text(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::Null) | None => String::new(),
+        Some(other) => value_text(other),
+    }
+}
+
+fn default_text(value: Option<&Value>, default: &str) -> String {
+    let text = optional_text(value);
+    if text.is_empty() {
+        default.to_string()
+    } else {
+        text
+    }
+}
+
+fn boolish(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(flag)) => Some(*flag),
+        Some(Value::Number(number)) => Some(number.as_i64().unwrap_or(0) != 0),
+        Some(Value::String(text)) => Some(matches!(
+            text.to_ascii_lowercase().as_str(),
+            "true" | "yes" | "y" | "1"
+        )),
+        _ => None,
+    }
+}
+
+fn fit(mut values: Vec<String>, len: usize, default: &str) -> Vec<String> {
+    values.resize(len, default.to_string());
+    values
 }
 
 fn get(values: &[String], index: usize) -> String {
@@ -651,6 +820,30 @@ fn insert_optional(map: &mut Map<String, Value>, key: &str, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_value_reads_placeholders_zones_and_nulls() {
+        let value = json!({
+            "num_regions": 2, "num_zones": 2,
+            "NC": [10, 20], "HR": [5.0, 10.0], "IZL": [1, 2],
+            "SCT": [1.0, 2.0], "SCS": ["kk", "mm"],
+            "NU_SIGF": [0.0, 0.1], "SIGMA_F": null, "Q": [0, 0],
+            "N": 4, "SPATIAL_SCHEME": "SC", "MODE": "eigenvalue",
+            "ZONE_NAMES": ["A", "B"], "K_EFF": null,
+            "epsilon": 1e-6, "max_iter": 500,
+            "reflex_der": true, "bound_left": 0.0, "bound_right": [0.0]
+        });
+        let model = ConfigModel::from_value(&value).expect("model");
+        assert_eq!(model.scs, vec!["kk", "mm"]);
+        assert_eq!(model.zone_names, vec!["A", "B"]);
+        assert_eq!(model.scheme, 2);
+        assert_eq!(model.mode, 3);
+        assert!((model.epsilon.parse::<f64>().unwrap() - 1e-6).abs() < 1e-18);
+        assert_eq!(model.max_iter, "500");
+        assert_eq!(model.bound_left, vec!["0.0"]);
+        assert!(model.reflex_der);
+        assert!(model.k_eff.is_empty());
+    }
 
     #[test]
     fn default_model_is_valid() {

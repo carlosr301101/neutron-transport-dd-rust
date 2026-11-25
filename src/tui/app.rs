@@ -158,6 +158,28 @@ pub enum Selection {
     Field(FieldKind),
 }
 
+/// Focus of the configuration screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigFocus {
+    /// Editing the form.
+    Form,
+    /// Browsing saved configurations.
+    Saved,
+}
+
+/// What the path dialog is used for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DialogPurpose {
+    SaveConfig,
+    ExpansionOutput,
+}
+
+#[derive(Debug, Clone)]
+struct PathDialog {
+    purpose: DialogPurpose,
+    input: TextInput,
+}
+
 /// Severity of the status message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -307,12 +329,6 @@ pub enum Action {
     Run,
     /// Cancel the active run.
     Cancel,
-    /// Add a sweep range.
-    AddRange,
-    /// Delete the selected sweep range.
-    DeleteRange,
-    /// Expand the sweep ranges.
-    ExpandRanges,
     /// Generate the selected plot.
     GeneratePlot,
     /// Open the last plot.
@@ -329,6 +345,18 @@ pub enum Action {
     OpenExport,
     /// Pick an option from the dropdown.
     SelectOption(usize),
+    /// Load a saved configuration.
+    LoadSaved(usize),
+    /// Select the previous source configuration (placeholders screen).
+    PrevConfig,
+    /// Select the next source configuration.
+    NextConfig,
+    /// Save the expanded configuration list.
+    SaveExpansion,
+    /// Run all expanded configurations.
+    RunBatch,
+    /// Edit the expansion output path.
+    EditOutput,
 }
 
 /// Panel under the mouse (used by the wheel).
@@ -342,6 +370,7 @@ enum Panel {
     SweepTable,
     PlotInfo,
     ExportInfo,
+    Saved,
 }
 
 /// Clickable regions of the last frame.
@@ -408,18 +437,35 @@ pub struct ResultsState {
 }
 
 /// Placeholder ranges being edited.
-#[derive(Default)]
 pub struct SweepState {
-    /// Ranges.
+    /// Detected ranges.
     pub ranges: Vec<SweepRange>,
     /// Selected range.
     pub selected: usize,
-    /// Selected column (0 name, 1 start, 2 end, 3 step).
+    /// Selected column (0 start, 1 end, 2 step).
     pub column: usize,
     /// Last expansion message.
     pub message: String,
     /// Scroll offset of the range table.
     pub scroll: usize,
+    /// Saved configuration used as the source.
+    pub config_selected: usize,
+    /// Expansion output path.
+    pub output: PathBuf,
+}
+
+impl Default for SweepState {
+    fn default() -> Self {
+        SweepState {
+            ranges: Vec::new(),
+            selected: 0,
+            column: 0,
+            message: String::new(),
+            scroll: 0,
+            config_selected: 0,
+            output: paths::outputs_dir().join("inputs").join("inputs_1d.json"),
+        }
+    }
 }
 
 /// Plot generation state.
@@ -462,8 +508,14 @@ pub struct App {
     pub editing: Option<Edit>,
     /// Active dropdown, if any.
     select: Option<SelectPopup>,
-    /// Save-as dialog buffer (path being edited).
-    save_dialog: Option<TextInput>,
+    /// Active path dialog (save-as or expansion output).
+    save_dialog: Option<PathDialog>,
+    /// Saved configurations (list items expanded).
+    pub saved: Vec<config_store::ConfigEntry>,
+    /// Selected saved configuration.
+    pub saved_selected: usize,
+    /// Focus of the configuration screen.
+    pub config_focus: ConfigFocus,
     /// Last validation result.
     pub validation: Validation,
     /// Status line.
@@ -516,6 +568,9 @@ impl Default for App {
             editing: None,
             select: None,
             save_dialog: None,
+            saved: config_store::list(),
+            saved_selected: 0,
+            config_focus: ConfigFocus::Form,
             validation,
             status: "Ready. Press ? or see the footer for keys.".into(),
             level: Level::Info,
@@ -665,11 +720,13 @@ impl App {
                 KeyCode::Up => self.move_sweep_selection(-1),
                 KeyCode::Down => self.move_sweep_selection(1),
                 KeyCode::Left => self.sweeps.column = self.sweeps.column.saturating_sub(1),
-                KeyCode::Right => self.sweeps.column = (self.sweeps.column + 1).min(3),
-                KeyCode::Char('a') => self.add_sweep_range(),
-                KeyCode::Char('d') => self.remove_sweep_range(),
+                KeyCode::Right => self.sweeps.column = (self.sweeps.column + 1).min(2),
+                KeyCode::Char('[') => self.select_placeholder_config(-1),
+                KeyCode::Char(']') => self.select_placeholder_config(1),
+                KeyCode::Char('r') => self.scan_placeholders(),
+                KeyCode::Char('x') | KeyCode::Char('p') => self.open_output_dialog(),
+                KeyCode::Char('R') => self.run_batch(),
                 KeyCode::Enter => self.edit_sweep_cell(),
-                KeyCode::Char('x') => self.expand_placeholders(),
                 _ => {}
             },
             Tab::Plots => match key.code {
@@ -694,6 +751,17 @@ impl App {
     }
 
     fn handle_config_key(&mut self, code: KeyCode) {
+        if self.config_focus == ConfigFocus::Saved {
+            match code {
+                KeyCode::Up => self.move_saved(-1),
+                KeyCode::Down => self.move_saved(1),
+                KeyCode::Enter => self.load_saved(self.saved_selected),
+                KeyCode::Esc | KeyCode::Char('L') => self.config_focus = ConfigFocus::Form,
+                _ => {}
+            }
+            return;
+        }
+
         match code {
             KeyCode::Up => self.move_selection(-1),
             KeyCode::Down => self.move_selection(1),
@@ -705,8 +773,22 @@ impl App {
             KeyCode::Char('v') => self.revalidate(),
             KeyCode::Char('z') => self.toggle_all_zones(),
             KeyCode::Char('Z') => self.toggle_all_sections(),
+            KeyCode::Char('L') if !self.saved.is_empty() => {
+                self.refresh_saved();
+                self.config_focus = ConfigFocus::Saved;
+                self.status = "Select a saved configuration (Enter loads it).".into();
+                self.level = Level::Info;
+            }
             _ => {}
         }
+    }
+
+    fn move_saved(&mut self, delta: i32) {
+        if self.saved.is_empty() {
+            return;
+        }
+        let count = self.saved.len() as i32;
+        self.saved_selected = (self.saved_selected as i32 + delta).clamp(0, count - 1) as usize;
     }
 
     /// Handle a mouse event (click or wheel).
@@ -791,9 +873,6 @@ impl App {
             Action::SweepRow(index) => self.sweeps.selected = index,
             Action::Run => self.start_run(),
             Action::Cancel => self.cancel_run(),
-            Action::AddRange => self.add_sweep_range(),
-            Action::DeleteRange => self.remove_sweep_range(),
-            Action::ExpandRanges => self.expand_placeholders(),
             Action::GeneratePlot => self.generate_plot(),
             Action::OpenPlot => self.open_last_plot(),
             Action::NextKind => self.plots.kind = (self.plots.kind + 1) % PLOT_KINDS.len(),
@@ -807,6 +886,15 @@ impl App {
                 }
                 self.apply_select();
             }
+            Action::LoadSaved(index) => {
+                self.config_focus = ConfigFocus::Saved;
+                self.saved_selected = index;
+                self.load_saved(index);
+            }
+            Action::PrevConfig => self.select_placeholder_config(-1),
+            Action::NextConfig => self.select_placeholder_config(1),
+            Action::SaveExpansion | Action::EditOutput => self.open_output_dialog(),
+            Action::RunBatch => self.run_batch(),
         }
     }
 
@@ -841,14 +929,26 @@ impl App {
                     self.sweeps.scroll.saturating_sub(1)
                 };
             }
+            Panel::Saved => {
+                if !self.saved.is_empty() {
+                    let count = self.saved.len() as i32;
+                    self.saved_selected =
+                        (self.saved_selected as i32 + direction).clamp(0, count - 1) as usize;
+                }
+            }
             Panel::PlotInfo | Panel::ExportInfo => {}
         }
     }
 
     fn on_tab_enter(&mut self) {
         match self.tab {
+            Tab::Config => self.refresh_saved(),
             Tab::Run => self.refresh_run_entries(),
             Tab::Results => self.refresh_results(),
+            Tab::Placeholders => {
+                self.refresh_saved();
+                self.scan_placeholders();
+            }
             _ => {}
         }
     }
@@ -1166,7 +1266,20 @@ impl App {
 
     /// Open the save-as dialog with a default path.
     pub fn open_save_dialog_with(&mut self, default: PathBuf) {
-        self.save_dialog = Some(TextInput::new(&default.to_string_lossy()));
+        self.save_dialog = Some(PathDialog {
+            purpose: DialogPurpose::SaveConfig,
+            input: TextInput::new(&default.to_string_lossy()),
+        });
+        self.level = Level::Info;
+    }
+
+    /// Open the path dialog for the expansion output.
+    pub fn open_output_dialog(&mut self) {
+        let default = self.sweeps.output.clone();
+        self.save_dialog = Some(PathDialog {
+            purpose: DialogPurpose::ExpansionOutput,
+            input: TextInput::new(&default.to_string_lossy()),
+        });
         self.level = Level::Info;
     }
 
@@ -1177,7 +1290,7 @@ impl App {
 
     /// Current path shown in the save-as dialog.
     pub fn save_dialog_value(&self) -> Option<&str> {
-        self.save_dialog.as_ref().map(TextInput::text)
+        self.save_dialog.as_ref().map(|dialog| dialog.input.text())
     }
 
     fn handle_save_dialog_key(&mut self, key: KeyEvent) {
@@ -1185,36 +1298,44 @@ impl App {
             KeyCode::Esc => self.save_dialog = None,
             KeyCode::Enter => self.commit_save_dialog(),
             code => {
-                if let Some(input) = self.save_dialog.as_mut() {
-                    text_input_key(input, code);
+                if let Some(dialog) = self.save_dialog.as_mut() {
+                    text_input_key(&mut dialog.input, code);
                 }
             }
         }
     }
 
     fn commit_save_dialog(&mut self) {
-        let Some(input) = self.save_dialog.clone() else {
+        let Some(dialog) = self.save_dialog.clone() else {
             return;
         };
-        let raw = input.text().to_string();
+        let raw = dialog.input.text().to_string();
         match resolve_save_path(&raw) {
-            Ok(path) => match self.save_to(&path) {
-                Ok(()) => {
-                    self.save_dialog = None;
-                    self.status = format!("Saved {}", path.display());
-                    self.level = Level::Ok;
-                    self.refresh_run_entries();
-                }
-                Err(error) => {
-                    self.status = format!("Save failed: {error}");
-                    self.level = Level::Error;
-                    self.save_dialog = Some(input);
+            Ok(path) => match dialog.purpose {
+                DialogPurpose::SaveConfig => match self.save_to(&path) {
+                    Ok(()) => {
+                        self.save_dialog = None;
+                        self.status = format!("Saved {}", path.display());
+                        self.level = Level::Ok;
+                        self.refresh_run_entries();
+                        self.refresh_saved();
+                    }
+                    Err(error) => {
+                        self.status = format!("Save failed: {error}");
+                        self.level = Level::Error;
+                        self.save_dialog = Some(dialog);
+                    }
+                },
+                DialogPurpose::ExpansionOutput => {
+                    self.sweeps.output = path.clone();
+                    let saved = self.expand_placeholders_to(path);
+                    self.save_dialog = if saved { None } else { Some(dialog) };
                 }
             },
             Err(error) => {
                 self.status = format!("Save failed: {error}");
                 self.level = Level::Error;
-                self.save_dialog = Some(input);
+                self.save_dialog = Some(dialog);
             }
         }
     }
@@ -1251,42 +1372,13 @@ impl App {
         };
     }
 
-    fn add_sweep_range(&mut self) {
-        let used: Vec<&str> = self
-            .sweeps
-            .ranges
-            .iter()
-            .map(|range| range.name.as_str())
-            .collect();
-        let name = ["kk", "mm", "tt", "pp"]
-            .iter()
-            .find(|name| !used.contains(name))
-            .copied()
-            .unwrap_or("kk");
-        self.sweeps.ranges.push(SweepRange::new(name));
-        self.sweeps.selected = self.sweeps.ranges.len() - 1;
-        self.sweeps.message.clear();
-    }
-
-    fn remove_sweep_range(&mut self) {
-        if self.sweeps.ranges.is_empty() {
-            return;
-        }
-        self.sweeps.ranges.remove(self.sweeps.selected);
-        self.sweeps.selected = self
-            .sweeps
-            .selected
-            .min(self.sweeps.ranges.len().saturating_sub(1));
-    }
-
     fn edit_sweep_cell(&mut self) {
         let Some(range) = self.sweeps.ranges.get(self.sweeps.selected) else {
             return;
         };
         let (label, value) = match self.sweeps.column {
-            0 => ("placeholder name", range.name.clone()),
-            1 => ("start", range.start.clone()),
-            2 => ("end", range.end.clone()),
+            0 => ("start", range.start.clone()),
+            1 => ("end", range.end.clone()),
             _ => ("step", range.step.clone()),
         };
         self.editing = Some(Edit {
@@ -1306,33 +1398,38 @@ impl App {
     }
 
     /// Expand the current ranges and write the list to an explicit path.
-    pub fn expand_placeholders_to(&mut self, output: PathBuf) {
-        let Some(entry) = self.run.entries.get(self.run.selected).cloned() else {
-            self.sweeps.message = "No configuration selected (outputs/inputs is empty).".into();
+    pub fn expand_placeholders_to(&mut self, output: PathBuf) -> bool {
+        let Some(entry) = self.saved.get(self.sweeps.config_selected).cloned() else {
+            self.sweeps.message = "No source configuration (outputs/inputs is empty).".into();
+            self.status = self.sweeps.message.clone();
             self.level = Level::Error;
-            return;
+            return false;
         };
-        let value = match config_store::load(&entry.path) {
+        let value = match config_store::load_entry(&entry) {
             Ok(value) => value,
             Err(error) => {
-                self.sweeps.message = format!("Could not read {}: {error}", entry.name);
+                self.sweeps.message = format!("Could not read {}: {error}", entry.label());
+                self.status = self.sweeps.message.clone();
                 self.level = Level::Error;
-                return;
+                return false;
             }
         };
 
-        match sweep::expand(&[(entry.name.clone(), value)], &self.sweeps.ranges) {
+        match sweep::expand_strict(&[(entry.label(), value)], &self.sweeps.ranges) {
             Ok(expansion) if expansion.configs.is_empty() => {
                 self.sweeps.message = format!(
                     "No configurations generated ({} problem(s)).",
                     expansion.errors.len()
                 );
+                self.status = self.sweeps.message.clone();
                 self.level = Level::Error;
+                false
             }
             Ok(expansion) => {
                 let total = expansion.configs.len();
                 match crate::cli::write_json(&output, &Value::Array(expansion.configs)) {
                     Ok(()) => {
+                        self.sweeps.output = output.clone();
                         self.sweeps.message = format!(
                             "Generated {total} config(s) in {}{}",
                             output.display(),
@@ -1344,16 +1441,169 @@ impl App {
                         );
                         self.status = self.sweeps.message.clone();
                         self.level = Level::Ok;
+                        self.refresh_saved();
+                        self.refresh_run_entries();
+                        true
                     }
                     Err(error) => {
                         self.sweeps.message = format!("Write failed: {error}");
+                        self.status = self.sweeps.message.clone();
                         self.level = Level::Error;
+                        false
                     }
                 }
             }
             Err(error) => {
                 self.sweeps.message = format!("Expansion failed: {error}");
                 self.status = self.sweeps.message.clone();
+                self.level = Level::Error;
+                false
+            }
+        }
+    }
+
+    /// Detect placeholders in the selected source configuration.
+    pub fn scan_placeholders(&mut self) {
+        if self.saved.is_empty() {
+            self.sweeps.ranges.clear();
+            self.sweeps.message = "No configurations in outputs/inputs. Save one first.".into();
+            return;
+        }
+        if self.sweeps.config_selected >= self.saved.len() {
+            self.sweeps.config_selected = 0;
+        }
+        let entry = self.saved[self.sweeps.config_selected].clone();
+        match config_store::load_entry(&entry) {
+            Ok(value) => {
+                let names = crate::placeholder::detect_placeholders(&value);
+                self.sweeps.ranges = names
+                    .into_iter()
+                    .map(crate::sweep::SweepRange::new)
+                    .collect();
+                self.sweeps.selected = 0;
+                self.sweeps.column = 0;
+                self.sweeps.scroll = 0;
+                self.sweeps.message = if self.sweeps.ranges.is_empty() {
+                    format!("No placeholders found in {}.", entry.label())
+                } else {
+                    format!(
+                        "Detected {} placeholder(s) in {}.",
+                        self.sweeps.ranges.len(),
+                        entry.label()
+                    )
+                };
+                self.level = Level::Info;
+            }
+            Err(error) => {
+                self.sweeps.ranges.clear();
+                self.sweeps.message = format!("Could not read {}: {error}", entry.label());
+                self.level = Level::Error;
+            }
+        }
+    }
+
+    fn select_placeholder_config(&mut self, delta: i32) {
+        if self.saved.is_empty() {
+            return;
+        }
+        let count = self.saved.len() as i32;
+        self.sweeps.config_selected =
+            (self.sweeps.config_selected as i32 + delta).rem_euclid(count) as usize;
+        self.scan_placeholders();
+    }
+
+    /// Expand and run every generated configuration.
+    pub fn run_batch(&mut self) {
+        let list = self.sweeps.output.clone();
+        let output = paths::next_output_path();
+        self.run_batch_to(list, output);
+    }
+
+    /// Expand to `list_path` and run the resulting configurations.
+    pub fn run_batch_to(&mut self, list_path: PathBuf, output: PathBuf) {
+        if self.run.running {
+            self.status = "A run is already in progress.".into();
+            self.level = Level::Info;
+            return;
+        }
+        if !self.expand_placeholders_to(list_path.clone()) {
+            return;
+        }
+        let value = match config_store::load(&list_path) {
+            Ok(value) => value,
+            Err(error) => {
+                self.status = format!("Could not read {}: {error}", list_path.display());
+                self.level = Level::Error;
+                return;
+            }
+        };
+        let Some(items) = value.as_array() else {
+            self.status = "Expanded output is not a list.".into();
+            self.level = Level::Error;
+            return;
+        };
+        let mut configs = Vec::with_capacity(items.len());
+        for (index, item) in items.iter().enumerate() {
+            match Config::from_value_with(item, RunOverrides::default(), None) {
+                Ok(config) => configs.push((
+                    format!("json_config_{:03}", index + 1),
+                    item.clone(),
+                    config,
+                )),
+                Err(error) => {
+                    self.status = format!("Config {}: {error}", index + 1);
+                    self.level = Level::Error;
+                    return;
+                }
+            }
+        }
+        if configs.is_empty() {
+            self.status = "No configurations to run.".into();
+            self.level = Level::Error;
+            return;
+        }
+
+        let count = configs.len();
+        self.run.log.clear();
+        self.run.log_offset = 0;
+        self.run.log.push(format!("batch: {count} config(s)"));
+        self.run.current = Some(format!("batch ({count} configs)"));
+        self.run.output = Some(output.clone());
+        self.run.running = true;
+        self.run.handle = Some(runner::spawn_batch(configs, output));
+        self.status = format!("Batch started ({count} configs).");
+        self.level = Level::Info;
+        self.switch_tab(Tab::Run);
+    }
+
+    /// Reload the saved-configuration list.
+    pub fn refresh_saved(&mut self) {
+        self.saved = config_store::list();
+        if self.saved_selected >= self.saved.len() {
+            self.saved_selected = self.saved.len().saturating_sub(1);
+        }
+        if self.sweeps.config_selected >= self.saved.len() {
+            self.sweeps.config_selected = self.saved.len().saturating_sub(1);
+        }
+    }
+
+    /// Load a saved configuration (or list item) into the form.
+    pub fn load_saved(&mut self, index: usize) {
+        let Some(entry) = self.saved.get(index).cloned() else {
+            return;
+        };
+        match config_store::load_entry(&entry).and_then(|value| ConfigModel::from_value(&value)) {
+            Ok(model) => {
+                self.model = model;
+                self.selection = Selection::Field(FieldKind::NumRegions);
+                self.validation = self.model.validate();
+                self.saved_selected = index;
+                self.config_focus = ConfigFocus::Form;
+                self.status = format!("Loaded {}", entry.label());
+                self.level = Level::Ok;
+            }
+            Err(error) => {
+                self.status = format!("Could not load {}: {error}", entry.label());
                 self.level = Level::Error;
             }
         }
@@ -1545,9 +1795,8 @@ impl App {
             EditTarget::Sweep { row, column } => {
                 if let Some(range) = self.sweeps.ranges.get_mut(row) {
                     match column {
-                        0 => range.name = value.trim().to_string(),
-                        1 => range.start = value.trim().to_string(),
-                        2 => range.end = value.trim().to_string(),
+                        0 => range.start = value.trim().to_string(),
+                        1 => range.end = value.trim().to_string(),
                         _ => range.step = value.trim().to_string(),
                     }
                 }
@@ -1575,14 +1824,24 @@ impl App {
             self.level = Level::Error;
             return;
         };
-        let value = match config_store::load(&entry.path) {
+        let value = match config_store::load_entry(&entry) {
             Ok(value) => value,
             Err(error) => {
-                self.status = format!("Could not read {}: {error}", entry.name);
+                self.status = format!("Could not read {}: {error}", entry.label());
                 self.level = Level::Error;
                 return;
             }
         };
+        let placeholders = crate::placeholder::detect_placeholders(&value);
+        if !placeholders.is_empty() {
+            self.status = format!(
+                "{} has placeholders ({}); expand it in the Placeholders tab.",
+                entry.label(),
+                placeholders.into_iter().collect::<Vec<_>>().join(", ")
+            );
+            self.level = Level::Error;
+            return;
+        }
         let config = match Config::from_value_with(&value, RunOverrides::default(), None) {
             Ok(config) => config,
             Err(error) => {
@@ -1592,7 +1851,7 @@ impl App {
             }
         };
 
-        let name = entry.name.clone();
+        let name = entry.label();
         self.run.log.clear();
         self.run.log_offset = 0;
         self.run
@@ -1642,6 +1901,27 @@ impl App {
                     self.run.output = Some(output.clone());
                     self.status = format!("Run finished: {}", output.display());
                     self.level = Level::Ok;
+                    self.refresh_results();
+                }
+                RunEvent::BatchDone {
+                    output,
+                    total,
+                    failures,
+                    cancelled,
+                } => {
+                    self.run.running = false;
+                    self.run.handle = None;
+                    let note = if cancelled { "cancelled" } else { "finished" };
+                    self.run.log.push(format!(
+                        "batch {note}: {total} run(s), {failures} failure(s)"
+                    ));
+                    self.run.output = Some(output.clone());
+                    self.status = format!("Batch {note}: {} ({total} run(s))", output.display());
+                    self.level = if failures > 0 {
+                        Level::Error
+                    } else {
+                        Level::Ok
+                    };
                     self.refresh_results();
                 }
                 RunEvent::Failed(error) => {
@@ -1881,6 +2161,7 @@ impl App {
     fn render_side_panel(&mut self, frame: &mut Frame, area: Rect) {
         let chunks = Layout::vertical([
             Constraint::Length(7),
+            Constraint::Length(5),
             Constraint::Length(6),
             Constraint::Min(0),
         ])
@@ -1897,7 +2178,10 @@ impl App {
                 Color::Green,
             ),
             Validation::Template(names) => (
-                format!("⚠ Template\nplaceholders: {}", names.join(", ")),
+                format!(
+                    "⚠ Template\nplaceholders: {}\nExpand in Placeholders (Tab).",
+                    names.join(", ")
+                ),
                 Color::Yellow,
             ),
             Validation::Invalid(error) => (format!("✗ Invalid\n{error}"), Color::Red),
@@ -1917,14 +2201,62 @@ impl App {
         frame.render_widget(geometry, chunks[1]);
 
         let tips = Paragraph::new(
-            "z: all zones   Z: all sections\n\
-             e: edit as text   m: mouse capture\n\
-             s: save as   v: validate",
+            "kk/mm = placeholders → Placeholders\n\
+             z/Z collapse · e edit · m mouse\n\
+             s save as · v validate · L load config",
         )
         .style(Style::default().fg(Color::DarkGray))
         .wrap(Wrap { trim: true })
         .block(Block::bordered().title("Tips"));
         frame.render_widget(tips, chunks[2]);
+
+        self.render_saved(frame, chunks[3]);
+    }
+
+    fn render_saved(&mut self, frame: &mut Frame, area: Rect) {
+        let offset = self.saved_selected.saturating_sub(4);
+        let lines: Vec<Line> = self
+            .saved
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .map(|(index, entry)| {
+                let selected = index == self.saved_selected;
+                let style = if selected {
+                    if self.config_focus == ConfigFocus::Saved {
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().bg(Color::DarkGray)
+                    }
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(
+                    format!("{} {}", if selected { "▶" } else { " " }, entry.label()),
+                    style,
+                ))
+            })
+            .collect();
+        let list = Paragraph::new(lines)
+            .block(Block::bordered().title(format!("Configs ({}). L to browse", self.saved.len())))
+            .scroll((offset as u16, 0));
+        frame.render_widget(list, area);
+
+        let inner = Block::bordered().inner(area);
+        for visible in 0..inner.height as usize {
+            let index = offset + visible;
+            if index >= self.saved.len() {
+                break;
+            }
+            self.hitmap.actions.push((
+                Rect::new(inner.x, inner.y + visible as u16, inner.width, 1),
+                Action::LoadSaved(index),
+            ));
+        }
+        self.hitmap.panels.push((area, Panel::Saved));
     }
 
     fn render_run(&mut self, frame: &mut Frame, area: Rect) {
@@ -1954,7 +2286,7 @@ impl App {
                     Style::default()
                 };
                 Line::from(Span::styled(
-                    format!("{} {}", if selected { "▶" } else { " " }, entry.name),
+                    format!("{} {}", if selected { "▶" } else { " " }, entry.label()),
                     style,
                 ))
             })
@@ -2144,16 +2476,18 @@ impl App {
         let sections = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(5),
         ])
         .split(area);
         self.render_buttons(
             frame,
             sections[0],
             &[
-                ("Add", Action::AddRange),
-                ("Delete", Action::DeleteRange),
-                ("Expand", Action::ExpandRanges),
+                ("<", Action::PrevConfig),
+                (">", Action::NextConfig),
+                ("Save", Action::SaveExpansion),
+                ("Run batch", Action::RunBatch),
+                ("Output", Action::EditOutput),
             ],
         );
 
@@ -2174,8 +2508,8 @@ impl App {
                 } else {
                     Style::default()
                 };
-                let cell = |column: usize, text: &str| {
-                    if selected && column == self.sweeps.column {
+                let value_cell = |edit_column: usize, text: &str| {
+                    if selected && edit_column == self.sweeps.column {
                         Cell::from(Span::styled(
                             text.to_string(),
                             Style::default().fg(Color::Yellow),
@@ -2184,11 +2518,14 @@ impl App {
                         Cell::from(text.to_string())
                     }
                 };
+                let values =
+                    range_values(range).map_or_else(|| "!".to_string(), |count| count.to_string());
                 Row::new(vec![
-                    cell(0, &range.name),
-                    cell(1, &range.start),
-                    cell(2, &range.end),
-                    cell(3, &range.step),
+                    Cell::from(range.name.clone()),
+                    value_cell(0, &range.start),
+                    value_cell(1, &range.end),
+                    value_cell(2, &range.step),
+                    Cell::from(values),
                 ])
                 .style(style)
             })
@@ -2197,13 +2534,14 @@ impl App {
         let table = Table::new(
             rows,
             [
-                Constraint::Length(18),
-                Constraint::Length(12),
-                Constraint::Length(12),
-                Constraint::Length(12),
+                Constraint::Length(14),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(8),
             ],
         )
-        .header(Row::new(vec!["Name", "Start", "End", "Step"]))
+        .header(Row::new(vec!["Name", "Start", "End", "Step", "Values"]))
         .block(Block::bordered().title("Placeholders"));
         frame.render_widget(table, sections[1]);
 
@@ -2220,16 +2558,24 @@ impl App {
         }
         self.hitmap.panels.push((sections[1], Panel::SweepTable));
 
+        let config_label = self
+            .saved
+            .get(self.sweeps.config_selected)
+            .map_or_else(|| "<none>".to_string(), |entry| entry.label());
+        let counts: Vec<Option<usize>> = self.sweeps.ranges.iter().map(range_values).collect();
+        let values_line = if counts.is_empty() {
+            "values: -".to_string()
+        } else if counts.iter().all(|count| *count == counts[0]) {
+            format!("values: {} per placeholder", counts[0].unwrap_or(0))
+        } else {
+            "values: lengths differ (must be equal)".to_string()
+        };
         let info = Paragraph::new(vec![
             Line::from(self.sweeps.message.clone()),
+            Line::from(format!("config: {config_label}")),
+            Line::from(format!("output: {}", self.sweeps.output.display())),
             Line::from(Span::styled(
-                format!(
-                    "base config: {}",
-                    self.run
-                        .entries
-                        .get(self.run.selected)
-                        .map_or("<none>", |entry| entry.name.as_str())
-                ),
+                values_line,
                 Style::default().fg(Color::DarkGray),
             )),
         ])
@@ -2444,14 +2790,21 @@ impl App {
     }
 
     fn render_save_dialog(&self, frame: &mut Frame) {
-        let Some(input) = self.save_dialog.as_ref() else {
+        let Some(dialog) = self.save_dialog.as_ref() else {
             return;
         };
         let width = 76u16.min(frame.area().width.saturating_sub(4)).max(30);
         let area = centered_rect_width(frame.area(), width, 5);
         frame.render_widget(Clear, area);
-        let (visible, column) =
-            cursor_window(input.text(), input.cursor, width.saturating_sub(4) as usize);
+        let (visible, column) = cursor_window(
+            dialog.input.text(),
+            dialog.input.cursor,
+            width.saturating_sub(4) as usize,
+        );
+        let title = match dialog.purpose {
+            DialogPurpose::SaveConfig => "Save configuration",
+            DialogPurpose::ExpansionOutput => "Expansion output",
+        };
         let lines = vec![
             Line::from(visible),
             Line::from(""),
@@ -2460,7 +2813,7 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )),
         ];
-        let block = Block::bordered().title("Save configuration");
+        let block = Block::bordered().title(title);
         let inner = block.inner(area);
         frame.render_widget(Paragraph::new(lines).block(block), area);
         frame.set_cursor_position((inner.x + column as u16, inner.y));
@@ -2505,6 +2858,15 @@ fn field_row(field: &crate::tui::model::Field, depth: usize) -> FormRow {
         header: false,
         depth,
     }
+}
+
+fn range_values(range: &SweepRange) -> Option<usize> {
+    let start = range.start.trim().parse::<f64>().ok()?;
+    let end = range.end.trim().parse::<f64>().ok()?;
+    let step = range.step.trim().parse::<f64>().ok()?;
+    crate::placeholder::build_values(start, end, step)
+        .ok()
+        .map(|values| values.len())
 }
 
 fn zone_index(kind: FieldKind) -> Option<usize> {
