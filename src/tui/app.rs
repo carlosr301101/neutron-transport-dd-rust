@@ -2244,10 +2244,12 @@ impl App {
         let Some(edit) = &self.editing else {
             return;
         };
-        let area = centered_rect(frame.area(), 60, 3);
+        let width = 44u16.min(frame.area().width.saturating_sub(4)).max(20);
+        let area = centered_rect_width(frame.area(), width, 3);
         frame.render_widget(Clear, area);
         let block = Block::bordered().title(format!("Edit {}", edit.label));
-        let paragraph = Paragraph::new(format!("{}▏", edit.buffer)).block(block);
+        let visible = tail_that_fits(&edit.buffer, width.saturating_sub(4) as usize);
+        let paragraph = Paragraph::new(format!("{visible}▏")).block(block);
         frame.render_widget(paragraph, area);
     }
 
@@ -2351,6 +2353,37 @@ fn geometry_bar(model: &ConfigModel) -> String {
     bar
 }
 
+fn centered_rect_width(area: Rect, width: u16, height: u16) -> Rect {
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(width.min(area.width)),
+            Constraint::Fill(1),
+        ])
+        .split(area);
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(height.min(area.height)),
+            Constraint::Fill(1),
+        ])
+        .split(horizontal[1]);
+    vertical[1]
+}
+
+fn tail_that_fits(text: &str, max_chars: usize) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    if characters.len() <= max_chars {
+        return text.to_string();
+    }
+    let skip = characters.len().saturating_sub(max_chars.saturating_sub(1));
+    let mut tail = String::from("…");
+    tail.extend(characters[skip..].iter());
+    tail
+}
+
 fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
@@ -2428,6 +2461,22 @@ mod tests {
             rows.iter()
                 .any(|row| row.selection == Selection::Field(FieldKind::ZoneSigmaT(1)))
         );
+    }
+
+    #[test]
+    fn tail_keeps_the_end_of_long_values() {
+        assert_eq!(tail_that_fits("abc", 10), "abc");
+        assert_eq!(tail_that_fits("abcdef", 4), "…def");
+        assert_eq!(tail_that_fits("abcdef", 1), "…");
+    }
+
+    #[test]
+    fn editor_stays_narrow() {
+        let area = Rect::new(0, 0, 120, 40);
+        let editor = centered_rect_width(area, 44, 3);
+        assert_eq!(editor.width, 44);
+        assert_eq!(editor.height, 3);
+        assert_eq!(editor.x, (120 - 44) / 2);
     }
 
     #[test]

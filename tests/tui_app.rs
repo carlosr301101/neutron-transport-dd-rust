@@ -185,3 +185,39 @@ fn adding_zones_pads_zone_names() {
     let validation = app.model.validate();
     assert!(matches!(validation, Validation::Valid(_)), "{validation:?}");
 }
+
+#[test]
+fn editor_overlay_stays_narrow() {
+    let mut app = App::default();
+    press(&mut app, KeyCode::Enter); // edit Regions
+    assert!(app.editing.is_some());
+
+    let text = render(&mut app, 120, 40);
+    let line = text
+        .lines()
+        .find(|line| line.contains("Edit Regions"))
+        .expect("editor line");
+    let start = line
+        .chars()
+        .position(|character| character == '┌')
+        .expect("left border");
+    let end = line
+        .chars()
+        .position(|character| character == '┐')
+        .expect("right border");
+    assert_eq!(end - start + 1, 44);
+}
+
+#[test]
+fn long_editor_values_show_their_tail() {
+    let mut app = App::default();
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Backspace);
+    type_text(
+        &mut app,
+        "123456789012345678901234567890123456789012345678901234567890",
+    );
+
+    let text = render(&mut app, 120, 40);
+    assert!(text.contains("…"), "long value should keep the end visible");
+}
