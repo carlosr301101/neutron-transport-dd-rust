@@ -190,7 +190,7 @@ least 80×24; the terminal is restored on exit and on panic.
 | **Config** | Editable form plus the **Configs** panel with saved configurations (list items appear as `file.json #1`, `#2`, …). Placeholders (`kk`, `mm`) are accepted in numeric fields and flagged as templates. `IZL`, `N`, scheme and mode open a dropdown. | `L` browse saved configs, `Enter` load, `↑/↓` move, `←/→` fold/cycle, `e` edit, `z`/`Z` collapse, `s` save as, `v` validate |
 | **Run** | Lists `outputs/inputs`; files that contain a list are split into one entry per configuration. Runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
 | **Results** | Output list and a runs table (`mode`, scheme, convergence, iterations, `k_eff`, `k_balance`). | `↑/↓` select |
-| **Placeholders** | Selects a source config, **auto-detects** its placeholders, preloads equal ranges and expands/saves or runs the batch. | `[`/`]` change config, `↑/↓` row, `←/→` column, `Enter` edit, `x` save (path dialog), `R` run batch, `r` rescan |
+| **Placeholders** | Lists only the saved configurations that contain placeholders (list items appear as `#k`), above the Expansion panel. Selecting one loads its ranges. | click or `[`/`]` select, `↑/↓` row, `←/→` column, `Enter` edit, `x` save (path dialog), `R` run batch, `r` rescan |
 | **Plots** | Generates scalar, angular, k-history or SCS plots for the selected output. | `k`/`←/→` kind, `g` generate, `o` open |
 | **Export** | `datos.json`, Excel workbook and SCS plot. | `d`, `x`, `s`, `o` open |
 
@@ -239,8 +239,10 @@ placeholders are kept as text and shown as a template.
 
 ### Placeholders and batch runs
 
-The Placeholders screen always works on the configuration selected at the top
-(`[`/`]` cycles through the saved configurations). On entry it:
+On entry the screen scans every saved configuration and preloads **only the
+ones that contain placeholders** into a list above the Expansion panel (list
+items are shown as `file.json #1`, `#2`, …). Click a row or use `[`/`]` to
+select it. For the selected configuration it:
 
 1. detects every non-numeric value in numeric fields (`kk`, `mm`, …), ignoring
    `ZONE_NAMES`, `MODE` and `SPATIAL_SCHEME`;
@@ -249,6 +251,9 @@ The Placeholders screen always works on the configuration selected at the top
 3. shows the number of values of each range and refuses to expand unless all
    ranges produce the **same** number of values (parallel zip, no silent
    truncation).
+
+If no configuration has placeholders, the list shows `Placeholder configs (0)`
+and the message `No configurations with placeholders found.`
 
 `x` opens the **Expansion output** dialog (default
 `outputs/inputs/inputs_1d.json`, editable) and writes the list; `R` additionally
