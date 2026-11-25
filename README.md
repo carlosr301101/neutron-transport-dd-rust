@@ -190,7 +190,7 @@ least 80×24; the terminal is restored on exit and on panic.
 | **Config** | Editable form plus the **Configs** panel with saved configurations (list items appear as `file.json #1`, `#2`, …). Placeholders (`kk`, `mm`) are accepted in numeric fields and flagged as templates. `IZL`, `N`, scheme and mode open a dropdown. | `L` browse saved configs, `Enter` load, `↑/↓` move, `←/→` fold/cycle, `e` edit, `z`/`Z` collapse, `s` save as, `v` validate |
 | **Run** | Lists `outputs/inputs`; files that contain a list are split into one entry per configuration. Runs the selected config in a worker thread with a live log. | `r` run, `c` cancel |
 | **Results** | Output list and a runs table (`mode`, scheme, convergence, iterations, `k_eff`, `k_balance`). | `↑/↓` select |
-| **Placeholders** | Lists only the saved configurations that contain placeholders (list items appear as `#k`), above the Expansion panel. Selecting one loads its ranges. | click or `[`/`]` select, `↑/↓` row, `←/→` column, `Enter` edit, `x` save (path dialog), `R` run batch, `r` rescan |
+| **Placeholders** | Lists only the saved configurations that contain placeholders (list items appear as `#k`), above the Expansion panel. `L` focuses the list (like Config): `↑/↓` moves, `Enter` loads the ranges, `Esc` returns. | `L` list, click or `[`/`]` select, `↑/↓` row, `←/→` column, `Enter` edit, `x` save, `R` run batch, `r` rescan |
 | **Plots** | Generates scalar, angular, k-history or SCS plots for the selected output. | `k`/`←/→` kind, `g` generate, `o` open |
 | **Export** | `datos.json`, Excel workbook and SCS plot. | `d`, `x`, `s`, `o` open |
 
@@ -241,8 +241,11 @@ placeholders are kept as text and shown as a template.
 
 On entry the screen scans every saved configuration and preloads **only the
 ones that contain placeholders** into a list above the Expansion panel (list
-items are shown as `file.json #1`, `#2`, …). Click a row or use `[`/`]` to
-select it. For the selected configuration it:
+items are shown as `file.json #1`, `#2`, …). Navigation works exactly like the
+Config panel: `L` focuses the list, `↑/↓` moves the highlight, `Enter` loads
+the ranges and returns to the table, `Esc` returns without loading. Clicking a
+row or using `[`/`]` is a shortcut that selects and loads immediately. For the
+selected configuration it:
 
 1. detects every non-numeric value in numeric fields (`kk`, `mm`, …), ignoring
    `ZONE_NAMES`, `MODE` and `SPATIAL_SCHEME`;

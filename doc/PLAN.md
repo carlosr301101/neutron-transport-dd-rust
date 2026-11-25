@@ -651,8 +651,9 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
   `outputs/inputs/config_1d_###.json`.
 - Panel Configs para cargar configuraciones guardadas (incluidas listas `#k`).
 - Placeholders: lista precargada solo con las configs que tienen placeholders
-  (incluye elementos `#k`), selección por clic o `[`/`]`, rangos precargados de
-  igual longitud, salida editable y ejecución por lotes.
+  (incluye elementos `#k`), selección por clic/`[`/`]` o con `L` + flechas +
+  Enter (igual que el panel Config), rangos precargados de igual longitud,
+  salida editable y ejecución por lotes.
 - Cursor en todos los inputs (←/→, Home/End, Backspace/Delete), dibujado como
   cursor real del terminal (no separa números), editor de 22 columnas; panel
   de geometría con una sola referencia al largo y un color por zona material.

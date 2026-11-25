@@ -1,6 +1,6 @@
 # Test suite - Neutron Transport DD
 
-264 tests (72 unit, 191 integration, 1 doc-test) covering configuration,
+265 tests (72 unit, 192 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
 post-processing (data, normalize, Excel, plots), cancellation, the TUI (config
@@ -259,6 +259,7 @@ numeric fields, JSON-serializable summary.
 - placeholder detection excludes zone names and preloads ranges,
 - the placeholder list filters out configurations without placeholders and includes list items `#k`,
 - clicking or `[`/`]` selects a placeholder config and reloads its ranges,
+- `L` focuses the list, arrows move, Enter loads and Esc returns (same as Config),
 - an empty filter shows the guidance message,
 - strict parallel expansion with equal ranges; unequal ranges are rejected,
 - expansion writes `inputs_1d.json` with the reference grid,
