@@ -221,6 +221,11 @@ editable: `Enter` saves, `Esc` cancels. A bare file name is stored under
 `outputs/inputs/`, relative paths are resolved against the work directory,
 `~/` is expanded and a missing `.json` extension is appended.
 
+The field editor and the save dialog support `←`/`→`, `Home`/`End`,
+`Backspace` and `Delete`; typing inserts at the cursor and the visible window
+follows it with `…` on the clipped side. The Geometry panel shows the
+proportional bar with a single length reference.
+
 Optional inline plot preview (sixel/kitty/halfblocks):
 
 ```bash

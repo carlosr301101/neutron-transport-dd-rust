@@ -649,6 +649,8 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
 - Captura de ratón con `m` para poder copiar texto.
 - Guardado con diálogo de ruta editable (`s`), con default
   `outputs/inputs/config_1d_###.json`.
+- Cursor en todos los inputs (←/→, Home/End, Backspace/Delete) y ventana
+  visible con `…`; panel de geometría con una sola referencia al largo.
 - 11 tests nuevos en `tests/tui_mouse.rs` (227 totales).
 
 ### Compatibilidad con configuraciones del TUI de Python
