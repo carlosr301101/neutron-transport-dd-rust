@@ -224,7 +224,9 @@ editable: `Enter` saves, `Esc` cancels. A bare file name is stored under
 The field editor and the save dialog support `←`/`→`, `Home`/`End`,
 `Backspace` and `Delete`; typing inserts at the cursor and the visible window
 follows it with `…` on the clipped side. The Geometry panel shows the
-proportional bar with a single length reference.
+proportional bar with a single length reference; each region segment is
+coloured by its material zone (`IZL`), so different zones are visually
+distinguishable.
 
 Optional inline plot preview (sixel/kitty/halfblocks):
 

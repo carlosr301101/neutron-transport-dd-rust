@@ -1,6 +1,6 @@
 # Test suite - Neutron Transport DD
 
-249 tests (70 unit, 178 integration, 1 doc-test) covering configuration,
+250 tests (71 unit, 178 integration, 1 doc-test) covering configuration,
 spatial schemes, the transport sweep, the four physics modes, the interactive
 wizard, the CLI inspection commands, logging, placeholder expansion,
 post-processing (data, normalize, Excel, plots), cancellation, the TUI (config
@@ -217,6 +217,7 @@ numeric fields, JSON-serializable summary.
 - the save dialog is 76 columns wide,
 - cursor editing: Home + insert in the middle, Left + Backspace, Home + Delete,
 - the geometry panel keeps the bar but no duplicated `total:` line,
+- the geometry bar uses one colour per material zone,
 - placeholders reported as a template,
 - tabs render each screen, flag toggles without opening the editor.
 
