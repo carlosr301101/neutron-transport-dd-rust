@@ -221,3 +221,68 @@ fn long_editor_values_show_their_tail() {
     let text = render(&mut app, 120, 40);
     assert!(text.contains("…"), "long value should keep the end visible");
 }
+
+#[test]
+fn s_opens_the_save_as_dialog_with_the_default_path() {
+    let mut app = App::default();
+    press(&mut app, KeyCode::Char('s'));
+    assert!(app.save_dialog_open());
+    let value = app.save_dialog_value().expect("path");
+    assert!(value.contains("outputs/inputs/config_1d_"));
+    assert!(value.ends_with(".json"));
+
+    let text = render(&mut app, 120, 40);
+    assert!(text.contains("Save configuration"));
+    assert!(text.contains("config_1d_"));
+
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.save_dialog_open());
+}
+
+#[test]
+fn save_dialog_writes_the_edited_path() {
+    let home = TempDir::new().expect("temp");
+    let mut app = App::default();
+    let target = home.path().join("custom");
+    app.open_save_dialog_with(target);
+    type_text(&mut app, ".json");
+    press(&mut app, KeyCode::Enter);
+
+    let path = home.path().join("custom.json");
+    assert!(path.exists());
+    Config::from_json_file_with(&path, RunOverrides::default(), None).expect("valid");
+    assert!(!app.save_dialog_open());
+    assert!(app.status.contains("Saved"));
+}
+
+#[test]
+fn save_dialog_rejects_non_json_paths() {
+    let home = TempDir::new().expect("temp");
+    let mut app = App::default();
+    app.open_save_dialog_with(home.path().join("config.txt"));
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.save_dialog_open());
+    assert!(app.status.contains("must end with .json"));
+    assert!(!home.path().join("config.txt").exists());
+}
+
+#[test]
+fn save_dialog_is_wider_than_the_field_editor() {
+    let mut app = App::default();
+    app.open_save_dialog_with(std::path::PathBuf::from("/tmp/example.json"));
+    let text = render(&mut app, 120, 40);
+    let line = text
+        .lines()
+        .find(|line| line.contains("Save configuration"))
+        .expect("dialog line");
+    let start = line
+        .chars()
+        .position(|character| character == '┌')
+        .expect("left");
+    let end = line
+        .chars()
+        .position(|character| character == '┐')
+        .expect("right");
+    assert_eq!(end - start + 1, 76);
+}

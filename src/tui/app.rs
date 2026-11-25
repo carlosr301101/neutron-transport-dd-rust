@@ -375,6 +375,8 @@ pub struct App {
     pub editing: Option<Edit>,
     /// Active dropdown, if any.
     select: Option<SelectPopup>,
+    /// Save-as dialog buffer (path being edited).
+    save_dialog: Option<String>,
     /// Last validation result.
     pub validation: Validation,
     /// Status line.
@@ -426,6 +428,7 @@ impl Default for App {
             table_state: TableState::default().with_selected(Some(0)),
             editing: None,
             select: None,
+            save_dialog: None,
             validation,
             status: "Ready. Press ? or see the footer for keys.".into(),
             level: Level::Info,
@@ -504,6 +507,11 @@ impl App {
 
         if self.select.is_some() {
             self.handle_popup_key(key);
+            return;
+        }
+
+        if self.save_dialog.is_some() {
+            self.handle_save_dialog_key(key);
             return;
         }
 
@@ -618,6 +626,10 @@ impl App {
 
     /// Handle a mouse event (click or wheel).
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.save_dialog.is_some() {
+            return;
+        }
+
         if self.select.is_some() {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => {
@@ -1064,15 +1076,65 @@ impl App {
             self.level = Level::Error;
             return;
         }
-        let path = paths::next_input_path();
-        match self.save_to(&path) {
-            Ok(()) => {
-                self.status = format!("Saved {}", path.display());
-                self.level = Level::Ok;
+        self.open_save_dialog_with(paths::next_input_path());
+    }
+
+    /// Open the save-as dialog with a default path.
+    pub fn open_save_dialog_with(&mut self, default: PathBuf) {
+        self.save_dialog = Some(default.to_string_lossy().to_string());
+        self.level = Level::Info;
+    }
+
+    /// Whether the save-as dialog is open.
+    pub fn save_dialog_open(&self) -> bool {
+        self.save_dialog.is_some()
+    }
+
+    /// Current path shown in the save-as dialog.
+    pub fn save_dialog_value(&self) -> Option<&str> {
+        self.save_dialog.as_deref()
+    }
+
+    fn handle_save_dialog_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.save_dialog = None,
+            KeyCode::Enter => self.commit_save_dialog(),
+            KeyCode::Backspace => {
+                if let Some(buffer) = self.save_dialog.as_mut() {
+                    buffer.pop();
+                }
             }
+            KeyCode::Char(character) => {
+                if let Some(buffer) = self.save_dialog.as_mut() {
+                    buffer.push(character);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn commit_save_dialog(&mut self) {
+        let Some(raw) = self.save_dialog.clone() else {
+            return;
+        };
+        match resolve_save_path(&raw) {
+            Ok(path) => match self.save_to(&path) {
+                Ok(()) => {
+                    self.save_dialog = None;
+                    self.status = format!("Saved {}", path.display());
+                    self.level = Level::Ok;
+                    self.refresh_run_entries();
+                }
+                Err(error) => {
+                    self.status = format!("Save failed: {error}");
+                    self.level = Level::Error;
+                    self.save_dialog = Some(raw);
+                }
+            },
             Err(error) => {
                 self.status = format!("Save failed: {error}");
                 self.level = Level::Error;
+                self.save_dialog = Some(raw);
             }
         }
     }
@@ -1621,6 +1683,9 @@ impl App {
         if self.select.is_some() {
             self.render_popup(frame);
         }
+        if self.save_dialog.is_some() {
+            self.render_save_dialog(frame);
+        }
     }
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
@@ -1773,7 +1838,7 @@ impl App {
         let tips = Paragraph::new(
             "z: all zones   Z: all sections\n\
              e: edit as text   m: mouse capture\n\
-             s: save   v: validate",
+             s: save as   v: validate",
         )
         .style(Style::default().fg(Color::DarkGray))
         .wrap(Wrap { trim: true })
@@ -2212,7 +2277,7 @@ impl App {
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let help = match self.tab {
             Tab::Config => {
-                "↑/↓ move   ←/→ fold/cycle   Enter open/toggle   e edit   z/Z collapse   s save   Tab switch"
+                "↑/↓ move   ←/→ fold/cycle   Enter open/toggle   e edit   z/Z collapse   s save as   Tab switch"
             }
             Tab::Run => "↑/↓ select   r run   c cancel   Tab switch   q quit",
             Tab::Results => "↑/↓ select output   wheel scroll   Tab switch   q quit",
@@ -2287,6 +2352,56 @@ impl App {
             }
         }
         self.hitmap.panels.push((area, Panel::PlotInfo));
+    }
+
+    fn render_save_dialog(&self, frame: &mut Frame) {
+        let Some(buffer) = self.save_dialog.as_ref() else {
+            return;
+        };
+        let width = 76u16.min(frame.area().width.saturating_sub(4)).max(30);
+        let area = centered_rect_width(frame.area(), width, 5);
+        frame.render_widget(Clear, area);
+        let visible = tail_that_fits(buffer, width.saturating_sub(4) as usize);
+        let lines = vec![
+            Line::from(format!("{visible}▏")),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enter save   Esc cancel   relative paths use NTS_HOME",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let paragraph = Paragraph::new(lines).block(Block::bordered().title("Save configuration"));
+        frame.render_widget(paragraph, area);
+    }
+}
+
+fn resolve_save_path(raw: &str) -> Result<PathBuf, String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+
+    let expanded = if let Some(rest) = text.strip_prefix("~/") {
+        match std::env::var_os("HOME") {
+            Some(home) => PathBuf::from(home).join(rest),
+            None => PathBuf::from(text),
+        }
+    } else {
+        PathBuf::from(text)
+    };
+
+    let path = if expanded.is_absolute() {
+        expanded
+    } else if expanded.components().count() == 1 {
+        paths::outputs_dir().join("inputs").join(expanded)
+    } else {
+        paths::work_root().join(expanded)
+    };
+
+    match path.extension().and_then(|extension| extension.to_str()) {
+        None => Ok(path.with_extension("json")),
+        Some("json") => Ok(path),
+        Some(_) => Err("path must end with .json".to_string()),
     }
 }
 
@@ -2461,6 +2576,29 @@ mod tests {
             rows.iter()
                 .any(|row| row.selection == Selection::Field(FieldKind::ZoneSigmaT(1)))
         );
+    }
+
+    #[test]
+    fn save_paths_are_resolved() {
+        let absolute = std::env::temp_dir().join("case.json");
+        assert_eq!(
+            resolve_save_path(absolute.to_str().unwrap()).unwrap(),
+            absolute
+        );
+
+        let no_extension = std::env::temp_dir().join("case");
+        assert_eq!(
+            resolve_save_path(no_extension.to_str().unwrap()).unwrap(),
+            absolute
+        );
+
+        assert!(
+            resolve_save_path(std::env::temp_dir().join("case.txt").to_str().unwrap()).is_err()
+        );
+        assert!(resolve_save_path("").is_err());
+
+        let bare = resolve_save_path("bare.json").unwrap();
+        assert!(bare.ends_with("outputs/inputs/bare.json"));
     }
 
     #[test]
