@@ -1908,7 +1908,7 @@ impl App {
             .block(Block::bordered().title("Validation"));
         frame.render_widget(status, chunks[0]);
 
-        let geometry = Paragraph::new(geometry_bar(
+        let geometry = Paragraph::new(geometry_line(
             &self.model,
             chunks[1].width.saturating_sub(2) as usize,
         ))
@@ -2528,34 +2528,65 @@ fn format_number(value: Option<&Value>) -> String {
         .map_or_else(|| "-".to_string(), |number| format!("{number:.6}"))
 }
 
-fn geometry_bar(model: &ConfigModel, available: usize) -> String {
-    let widths: Vec<f64> = model
+const ZONE_COLORS: [Color; 8] = [
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::LightBlue,
+    Color::LightGreen,
+    Color::LightRed,
+    Color::LightMagenta,
+];
+
+fn zone_color(zone: usize) -> Color {
+    ZONE_COLORS[(zone.saturating_sub(1)) % ZONE_COLORS.len()]
+}
+
+fn geometry_line(model: &ConfigModel, available: usize) -> Line<'static> {
+    let segments: Vec<(f64, usize)> = model
         .hr
         .iter()
-        .filter_map(|value| value.trim().parse::<f64>().ok())
-        .filter(|value| *value > 0.0)
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let width = value.trim().parse::<f64>().ok()?;
+            if width <= 0.0 {
+                return None;
+            }
+            let zone = model
+                .izl
+                .get(index)
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(index + 1);
+            Some((width, zone))
+        })
         .collect();
-    if widths.is_empty() {
-        return "[no geometry]".to_string();
+
+    if segments.is_empty() {
+        return Line::from("[no geometry]");
     }
-    let total: f64 = widths.iter().sum();
+
+    let total: f64 = segments.iter().map(|(width, _)| width).sum();
     let label = format!("{total:.2} cm");
-    let separators = widths.len().saturating_sub(1);
+    let separators = segments.len().saturating_sub(1);
     let slots = available
         .saturating_sub(label.len() + 3 + separators)
         .max(4);
-    let mut bar = String::from("[");
-    for (index, width) in widths.iter().enumerate() {
-        let cells = ((width / total) * slots as f64).round().max(1.0) as usize;
+
+    let mut spans: Vec<Span<'static>> = vec![Span::raw("[")];
+    for (index, (width, zone)) in segments.iter().enumerate() {
         if index > 0 {
-            bar.push('│');
+            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
         }
-        bar.push_str(&"█".repeat(cells));
+        let cells = ((width / total) * slots as f64).round().max(1.0) as usize;
+        spans.push(Span::styled(
+            "█".repeat(cells),
+            Style::default().fg(zone_color(*zone)),
+        ));
     }
-    bar.push(']');
-    bar.push(' ');
-    bar.push_str(&label);
-    bar
+    spans.push(Span::raw("] "));
+    spans.push(Span::raw(label));
+    Line::from(spans)
 }
 
 fn centered_rect_width(area: Rect, width: u16, height: u16) -> Rect {
@@ -2647,11 +2678,39 @@ mod tests {
     #[test]
     fn geometry_bar_has_regions() {
         let model = ConfigModel::default();
-        let bar = geometry_bar(&model, 50);
-        assert!(bar.starts_with('['));
-        assert!(bar.contains('█'));
-        assert!(bar.contains("20.00 cm"));
-        assert!(bar.chars().count() <= 50);
+        let line = geometry_line(&model, 50);
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(text.starts_with('['));
+        assert!(text.contains('█'));
+        assert!(text.contains("20.00 cm"));
+        assert!(text.chars().count() <= 50);
+    }
+
+    #[test]
+    fn geometry_bar_uses_one_colour_per_zone() {
+        let model = ConfigModel {
+            num_regions: 2,
+            nc: vec!["5".into(), "5".into()],
+            hr: vec!["5".into(), "5".into()],
+            izl: vec!["1".into(), "2".into()],
+            ..ConfigModel::default()
+        };
+
+        let line = geometry_line(&model, 60);
+        let colors: Vec<Color> = line
+            .spans
+            .iter()
+            .filter(|span| span.content.contains('█'))
+            .filter_map(|span| span.style.fg)
+            .collect();
+        assert!(colors.len() >= 2);
+        assert_ne!(colors[0], colors[1]);
+        assert_eq!(zone_color(1), zone_color(1));
+        assert_ne!(zone_color(1), zone_color(2));
     }
 
     #[test]
