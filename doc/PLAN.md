@@ -647,6 +647,8 @@ Las pantallas y tablas se renderizan desde `app.rs` (no se separaron en
 - Clics en pestañas, filas, cabeceras, listas, tabla, botones y popups.
 - Rueda para formulario, listas, log y tablas.
 - Captura de ratón con `m` para poder copiar texto.
+- Guardado con diálogo de ruta editable (`s`), con default
+  `outputs/inputs/config_1d_###.json`.
 - 11 tests nuevos en `tests/tui_mouse.rs` (227 totales).
 
 ### Compatibilidad con configuraciones del TUI de Python
