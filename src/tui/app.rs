@@ -2390,17 +2390,21 @@ impl App {
         let Some(edit) = &self.editing else {
             return;
         };
-        let width = 44u16.min(frame.area().width.saturating_sub(4)).max(20);
+        let width = 22u16.min(frame.area().width.saturating_sub(4)).max(16);
         let area = centered_rect_width(frame.area(), width, 3);
         frame.render_widget(Clear, area);
-        let block = Block::bordered().title(format!("Edit {}", edit.label));
-        let visible = cursor_window(
+        let block = Block::bordered().title(truncate_label(
+            &edit.label,
+            width.saturating_sub(2) as usize,
+        ));
+        let (visible, column) = cursor_window(
             edit.input.text(),
             edit.input.cursor,
             width.saturating_sub(4) as usize,
         );
-        let paragraph = Paragraph::new(visible).block(block);
-        frame.render_widget(paragraph, area);
+        let inner = block.inner(area);
+        frame.render_widget(Paragraph::new(visible).block(block), area);
+        frame.set_cursor_position((inner.x + column as u16, inner.y));
     }
 
     fn render_popup(&mut self, frame: &mut Frame) {
@@ -2446,7 +2450,8 @@ impl App {
         let width = 76u16.min(frame.area().width.saturating_sub(4)).max(30);
         let area = centered_rect_width(frame.area(), width, 5);
         frame.render_widget(Clear, area);
-        let visible = cursor_window(input.text(), input.cursor, width.saturating_sub(4) as usize);
+        let (visible, column) =
+            cursor_window(input.text(), input.cursor, width.saturating_sub(4) as usize);
         let lines = vec![
             Line::from(visible),
             Line::from(""),
@@ -2455,8 +2460,10 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )),
         ];
-        let paragraph = Paragraph::new(lines).block(Block::bordered().title("Save configuration"));
-        frame.render_widget(paragraph, area);
+        let block = Block::bordered().title("Save configuration");
+        let inner = block.inner(area);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+        frame.set_cursor_position((inner.x + column as u16, inner.y));
     }
 }
 
@@ -2609,13 +2616,14 @@ fn centered_rect_width(area: Rect, width: u16, height: u16) -> Rect {
     vertical[1]
 }
 
-fn cursor_window(text: &str, cursor: usize, max_cells: usize) -> String {
+fn cursor_window(text: &str, cursor: usize, max_cells: usize) -> (String, usize) {
     let characters: Vec<char> = text.chars().collect();
     let length = characters.len();
     let cursor = cursor.min(length);
-    let max_cells = max_cells.max(3);
-    // Two ellipsis cells and one cursor cell are always reserved.
-    let budget = max_cells.saturating_sub(3).max(1);
+    let max_cells = max_cells.max(2);
+    // Up to two ellipsis cells are reserved; the cursor is drawn by the
+    // terminal, so it does not consume a cell or split a number.
+    let budget = max_cells.saturating_sub(2).max(1);
     let (start, end) = if length <= budget {
         (0, length)
     } else {
@@ -2627,21 +2635,26 @@ fn cursor_window(text: &str, cursor: usize, max_cells: usize) -> String {
     };
 
     let mut out = String::new();
-    if start > 0 {
+    let left_ellipsis = start > 0;
+    if left_ellipsis {
         out.push('…');
     }
-    for (offset, character) in characters[start..end].iter().enumerate() {
-        if start + offset == cursor {
-            out.push('▏');
-        }
-        out.push(*character);
-    }
-    if cursor == end {
-        out.push('▏');
-    }
+    out.extend(characters[start..end].iter());
     if end < length {
         out.push('…');
     }
+    let column = usize::from(left_ellipsis) + (cursor - start).min(end - start);
+    (out, column)
+}
+
+fn truncate_label(text: &str, max_chars: usize) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    if characters.len() <= max_chars {
+        return text.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let mut out: String = characters[..keep].iter().collect();
+    out.push('…');
     out
 }
 
@@ -2800,26 +2813,29 @@ mod tests {
 
     #[test]
     fn cursor_window_keeps_the_cursor_visible() {
-        let short = cursor_window("abc", 2, 10);
-        assert_eq!(short, "ab▏c");
+        let (short, column) = cursor_window("abc", 2, 10);
+        assert_eq!(short, "abc");
+        assert_eq!(column, 2);
 
         let long = "abcdefghijklmnopqrstuvwxyz";
-        let window = cursor_window(long, 20, 10);
-        assert!(window.contains('▏'));
+        let (window, column) = cursor_window(long, 20, 10);
+        assert!(!window.contains('▏'));
+        assert!(window.starts_with('…'));
         assert!(window.chars().count() <= 10);
+        assert!(column < 10);
 
-        let at_end = cursor_window("abcdef", 6, 5);
-        assert!(at_end.ends_with('▏'));
+        let (at_end, column) = cursor_window("abcdef", 6, 5);
         assert!(at_end.starts_with('…'));
+        assert_eq!(column, at_end.chars().count());
     }
 
     #[test]
     fn editor_stays_narrow() {
         let area = Rect::new(0, 0, 120, 40);
-        let editor = centered_rect_width(area, 44, 3);
-        assert_eq!(editor.width, 44);
+        let editor = centered_rect_width(area, 22, 3);
+        assert_eq!(editor.width, 22);
         assert_eq!(editor.height, 3);
-        assert_eq!(editor.x, (120 - 44) / 2);
+        assert_eq!(editor.x, (120 - 22) / 2);
     }
 
     #[test]

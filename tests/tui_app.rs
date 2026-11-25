@@ -195,7 +195,7 @@ fn editor_overlay_stays_narrow() {
     let text = render(&mut app, 120, 40);
     let line = text
         .lines()
-        .find(|line| line.contains("Edit Regions"))
+        .find(|line| line.contains('┌') && line.contains("Regions"))
         .expect("editor line");
     let start = line
         .chars()
@@ -205,7 +205,7 @@ fn editor_overlay_stays_narrow() {
         .chars()
         .position(|character| character == '┐')
         .expect("right border");
-    assert_eq!(end - start + 1, 44);
+    assert_eq!(end - start + 1, 22);
 }
 
 #[test]
@@ -327,4 +327,23 @@ fn geometry_panel_shows_only_one_length_reference() {
     assert!(text.contains("█"));
     assert!(text.contains("20.00 cm"));
     assert!(!text.contains("total:"));
+}
+
+#[test]
+fn editor_cursor_does_not_split_the_number() {
+    let mut app = App::default();
+    app.select_field(FieldKind::RegionThickness(0));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Right);
+
+    let text = render(&mut app, 120, 40);
+    let lines: Vec<&str> = text.lines().collect();
+    let border = lines
+        .iter()
+        .position(|line| line.contains('┌') && line.contains("HR region 1"))
+        .expect("editor border");
+    let content = lines[border + 1];
+    assert!(content.contains("20"));
+    assert!(!content.contains('▏'));
 }
