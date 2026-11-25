@@ -311,7 +311,11 @@ fn output_dialog_prefills_the_conventional_path() {
     let mut app = App::default();
     app.open_output_dialog();
     let value = app.save_dialog_value().expect("path");
-    assert!(value.ends_with("outputs/inputs/inputs_1d.json"));
+    assert!(
+        value
+            .replace('\\', "/")
+            .ends_with("outputs/inputs/inputs_1d.json")
+    );
 }
 
 #[test]

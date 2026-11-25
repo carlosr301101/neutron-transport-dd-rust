@@ -228,7 +228,11 @@ fn s_opens_the_save_as_dialog_with_the_default_path() {
     press(&mut app, KeyCode::Char('s'));
     assert!(app.save_dialog_open());
     let value = app.save_dialog_value().expect("path");
-    assert!(value.contains("outputs/inputs/config_1d_"));
+    assert!(
+        value
+            .replace('\\', "/")
+            .contains("outputs/inputs/config_1d_")
+    );
     assert!(value.ends_with(".json"));
 
     let text = render(&mut app, 120, 40);

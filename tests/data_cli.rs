@@ -17,6 +17,18 @@ fn run_once(home: &Path) -> std::path::PathBuf {
     home.join("outputs/results/output_1d_001.json")
 }
 
+/// Path recorded by the CLI must point at the expected file. Comparing
+/// `Path`s ignores the separator style, so this also holds on Windows where the
+/// CLI normalises `outputs/results` to `outputs\\results`.
+fn assert_source(datos: &Value, expected: &Path) {
+    let recorded = datos["source"].as_str().expect("source path");
+    assert_eq!(
+        Path::new(recorded),
+        expected,
+        "recorded source {recorded:?} does not match {expected:?}"
+    );
+}
+
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).expect("read")).expect("json")
 }
@@ -43,7 +55,7 @@ fn extraction_writes_the_reference_schema() {
     let datos = read_json(&home.path().join("outputs/results/datos.json"));
     assert_eq!(datos["positions"], json!([0, 10, 19]));
     assert_eq!(datos["spatial_schemes"], json!(["DD"]));
-    assert_eq!(datos["source"], result.to_string_lossy().as_ref());
+    assert_source(&datos, &result);
 
     let row = &datos["data"][0];
     assert_eq!(row["config_name"], "json_config_001");
@@ -74,7 +86,7 @@ fn latest_uses_the_last_output() {
     assert!(output.status.success(), "{output:?}");
 
     let datos = read_json(&home.path().join("outputs/results/datos.json"));
-    assert_eq!(datos["source"], latest.to_string_lossy().as_ref());
+    assert_source(&datos, &latest);
 }
 
 #[test]
